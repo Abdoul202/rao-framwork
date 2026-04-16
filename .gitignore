@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data & Results
+data/*.json
+data/*.csv
+results/
+*.log
+
+# Neo4j local data
+neo4j_data/
+
+# ChromaDB local data
+chroma_data/
+
+# OS
+.DS_Store
+Thumbs.db
