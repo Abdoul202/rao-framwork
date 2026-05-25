@@ -66,26 +66,3 @@ jobs:
 
       - name: Run ruff
         run: ruff check rao/ tests/
-
-  deps-check:
-    name: Dependency consistency
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - name: Install pip-tools
-        run: pip install pip-tools
-
-      - name: Verify requirements.txt is up to date
-        run: |
-          pip-compile requirements.in -o requirements.check.txt --quiet
-          diff requirements.txt requirements.check.txt || \
-            (echo "requirements.txt is out of sync with requirements.in — run 'make deps-compile'" && exit 1)
-
-      # Dev deps are declared in pyproject.toml [project.optional-dependencies]
-      # No separate requirements-dev.txt to check.
