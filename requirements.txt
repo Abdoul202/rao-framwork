@@ -6,7 +6,7 @@ langchain-community>=0.2.0
 
 # Knowledge stores
 neo4j>=5.0.0
-chromadb>=0.4.0
+# chromadb is optional — install with: pip install -e ".[vector]"
 
 # Tools
 python-nmap>=0.7.1

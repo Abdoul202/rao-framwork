@@ -47,8 +47,8 @@ RAO-Framework automates the offensive security assessment pipeline using coordin
 
 ### Knowledge Layer
 
-- **Neo4j** - Graph database storing hosts, services, vulnerabilities, and attack paths
-- **ChromaDB** - Vector store for semantic search over CVE descriptions and security knowledge
+- **Neo4j** - Graph database storing hosts, services, vulnerabilities, and attack paths (optionnel)
+- **ChromaDB** - Vector store for semantic search over CVE descriptions (optionnel — `pip install -e ".[vector]"`)
 
 ## Tech Stack
 
@@ -57,8 +57,8 @@ RAO-Framework automates the offensive security assessment pipeline using coordin
 - **LangChain** - LLM abstraction (supports Groq, Ollama)
 - **Click** - Professional CLI interface
 - **Rich** - Terminal UI, tables, progress spinners
-- **Neo4j** - Attack path graph database
-- **ChromaDB** - Vector embeddings for CVE knowledge
+- **Neo4j** - Attack path graph database *(optional)*
+- **ChromaDB** - Vector embeddings for CVE knowledge *(optional — requires python3-devel)*
 - **python-nmap** - Network reconnaissance
 - **Jinja2** - HTML report templating
 - **NVD API** - Vulnerability intelligence
@@ -82,15 +82,17 @@ cd rao-framework
 python -m venv venv
 source venv/bin/activate
 
-# Dependencies
-pip install -r requirements.txt
-pip install -e .  # Install CLI
+# Install (CLI + all runtime dependencies)
+pip install -e .
+
+# Optional: vector search support (requires python3-devel / python3-dev)
+pip install -e ".[vector]"
 
 # Configuration
 cp .env.example .env
 # Edit .env with your API keys (Groq is free: https://console.groq.com)
 
-# Start Neo4j
+# Optional: start Neo4j
 docker compose up -d
 ```
 
@@ -98,18 +100,19 @@ docker compose up -d
 
 ```bash
 # Full mission (nmap + CVE analysis + web scan + subdomains + validation)
-rao scan 192.168.1.100 --html --save
+# --confirm is REQUIRED: confirms you have written authorization to scan
+rao scan 192.168.1.100 --confirm --html --save
 
 # Full mission with custom scope
-rao scan target.local -s 192.168.1.0/24 -s 10.0.0.0/8 --html
+rao scan target.local --confirm -s 192.168.1.0/24 -s 10.0.0.0/8 --html
 
 # Recon only (nmap + web scan, no CVE/LLM analysis)
-rao recon 192.168.1.100
+rao recon 192.168.1.100 --confirm
 
 # Web-only scan (headers, paths, CORS, cookies, tech fingerprint)
-rao webscan https://target.local
+rao webscan https://target.local --confirm
 
-# Subdomain enumeration (crt.sh + DNS brute-force)
+# Subdomain enumeration (crt.sh + DNS brute-force) — passive, no --confirm needed
 rao subdomains example.com
 
 # Session management
@@ -117,10 +120,10 @@ rao sessions list
 rao sessions resume session_name --html
 
 # Skip specific phases
-rao scan 192.168.1.100 --no-web --no-subdomains
+rao scan 192.168.1.100 --confirm --no-web --no-subdomains
 
 # Verbose output
-rao scan 192.168.1.100 -v --html --save
+rao scan 192.168.1.100 --confirm -v --html --save
 ```
 
 ### Programmatic Usage
@@ -222,9 +225,9 @@ rao-framework/
 
 - [x] **v0.1** - MVP: Scout + Librarian + Critic + OCC pipeline
 - [x] **v0.1.1** - Web scanner, subdomain enum, CLI, HTML reports, sessions, scope validation
+- [x] **v0.1.2** - Plugin system (`ToolPlugin` protocol + `ToolRegistry`), CVE cache, structured LLM output
 - [ ] **v0.2** - Operator agent (exploitation planning), Neo4j attack path visualization
 - [ ] **v0.3** - Streamlit dashboard for mission monitoring
-- [ ] **v0.4** - Plugin system for custom tools
 - [ ] **v1.0** - Full autonomous red team cycle with human-in-the-loop controls
 
 ## Author

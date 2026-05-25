@@ -6,7 +6,8 @@ langchain-community>=0.2,<0.4
 
 # Knowledge stores
 neo4j>=5.0,<6.0
-chromadb>=0.4,<1.0
+# chromadb is optional — install with: pip install -e ".[vector]"
+# Requires Python dev headers (python3-devel) to compile chroma-hnswlib
 
 # Tools
 python-nmap>=0.7.1,<0.8
