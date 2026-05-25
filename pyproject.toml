@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=40.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# N22 fix: pyproject.toml replaces legacy setup.py (PEP 517/518 compliant)
+name = "rao-framework"
+version = "0.1.0"
+description = "Multi-Agent Autonomous Red Teaming Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "RAO-Framework Contributors" }
+]
+keywords = ["security", "red-team", "penetration-testing", "ai", "agents"]
+
+# N23 fix: install_requires now declared — pip install rao-framework
+# will install all runtime dependencies automatically
+dependencies = [
+    "langchain>=0.2.0,<1.0.0",
+    "langgraph>=0.1.0,<1.0.0",
+    "langchain-groq>=0.1.0,<1.0.0",
+    "langchain-community>=0.2.0,<1.0.0",
+    "neo4j>=5.0.0,<6.0.0",
+    "python-nmap>=0.7.1,<1.0.0",
+    "requests>=2.31.0,<3.0.0",
+    "beautifulsoup4>=4.12.0,<5.0.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "pydantic-settings>=2.0.0,<3.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    "click>=8.1.0,<9.0.0",
+    "jinja2>=3.1.0,<4.0.0",
+    "rich>=13.0.0,<14.0.0",
+]
+
+[project.optional-dependencies]
+# Vector-search support (requires C++ build tools + Python dev headers)
+vector = [
+    "chromadb>=0.4.0,<1.0.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "pip-tools>=7.0.0",
+    "chromadb>=0.4.0,<1.0.0",
+]
+
+[project.scripts]
+rao = "rao.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rao*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "PIE"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

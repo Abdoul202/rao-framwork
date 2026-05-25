@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y nmap
+
+      - name: Install Python dependencies
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Smoke test — imports
+        run: |
+          python -c "from rao.cli import cli"
+          python -c "from rao.core.orchestrator import OCC"
+          python -c "from rao.agents.operator import OperatorAgent"
+          python -c "from rao.core.structured_output import CriticVerdict"
+
+      - name: Run test suite
+        run: pytest tests/ -v --tb=short
+        env:
+          LLM_PROVIDER: ollama          # Offline mode for CI
+          GROQ_API_KEY: ""
+          NEO4J_URI: bolt://localhost:7687
+          # N24 fix: set a non-empty password to suppress the warning log
+          # and avoid polluting test output. Neo4j won't actually be running
+          # in CI unless a service container is added.
+          NEO4J_PASSWORD: "ci-test-password"
+          NVD_API_KEY: ""
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff
+        run: ruff check rao/ tests/
+
+  deps-check:
+    name: Dependency consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pip-tools
+        run: pip install pip-tools
+
+      - name: Verify requirements.txt is up to date
+        run: |
+          pip-compile requirements.in -o requirements.check.txt --quiet
+          diff requirements.txt requirements.check.txt || \
+            (echo "requirements.txt is out of sync with requirements.in — run 'make deps-compile'" && exit 1)
+
+      # Dev deps are declared in pyproject.toml [project.optional-dependencies]
+      # No separate requirements-dev.txt to check.
