@@ -97,7 +97,7 @@ def test_offline_fallback_drops_low():
 
 def test_llm_error_resets_cached_llm():
     """N18: After an LLM API error, self._llm must be reset to None for retry."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     critic = CriticAgent()
     fake_llm = MagicMock()

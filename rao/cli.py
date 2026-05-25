@@ -67,7 +67,6 @@ def _require_confirm(target: str, confirm: bool) -> None:
 @click.version_option(version=_VERSION, prog_name="rao")  # BUG #28 fix: uses _VERSION
 def cli():
     """RAO-Framework - Multi-Agent Autonomous Red Teaming System."""
-    pass
 
 
 @cli.command()
@@ -346,7 +345,6 @@ def subdomains(domain, verbose):
 @cli.group()
 def sessions():
     """Manage saved mission sessions."""
-    pass
 
 
 @sessions.command("list")
@@ -483,7 +481,6 @@ def _web_to_findings(web_result, mission) -> None:
 
 
 def _print_summary(mission, web_results, subdomains) -> None:
-    from rao.core.state import Severity
 
     console.print("\n")
     console.print(Panel(

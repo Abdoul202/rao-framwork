@@ -100,8 +100,8 @@ class ScopeValidator:
             for addr in network.hosts():
                 self._validate_ip(addr)
             return True
-        except ValueError:
-            raise ScopeError(f"Invalid target format: {target}")
+        except ValueError as e:
+            raise ScopeError(f"Invalid target format: {target}") from e
 
     def _validate_domain(self, domain: str) -> bool:
         domain = domain.lower()
@@ -118,8 +118,8 @@ class ScopeValidator:
         try:
             socket.setdefaulttimeout(5.0)
             ip_str = socket.gethostbyname(domain)
-        except socket.gaierror:
-            raise ScopeError(f"Cannot resolve domain: {domain}")
+        except socket.gaierror as e:
+            raise ScopeError(f"Cannot resolve domain: {domain}") from e
         finally:
             socket.setdefaulttimeout(old_timeout)
 

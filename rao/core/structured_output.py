@@ -51,7 +51,7 @@ class CriticVerdict(BaseModel):
         return Exploitability.MEDIUM
 
     @classmethod
-    def parse_llm_response(cls, response: str) -> "CriticVerdict":
+    def parse_llm_response(cls, response: str) -> CriticVerdict:
         """Parse the structured LLM text response into a CriticVerdict.
 
         BUG #10 fix: default is now FALSE_POSITIVE + NONE exploitability
@@ -105,7 +105,7 @@ class LibrarianFinding(BaseModel):
     why_relevant: str
 
     @classmethod
-    def parse_llm_line(cls, line: str) -> "LibrarianFinding | None":
+    def parse_llm_line(cls, line: str) -> LibrarianFinding | None:
         """Parse a pipe-delimited LLM response line."""
         parts = [p.strip() for p in line.split("|")]
         if len(parts) < 4:

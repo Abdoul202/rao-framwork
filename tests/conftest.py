@@ -14,7 +14,6 @@ import pytest
 
 from rao.core.state import Finding, HostInfo, MissionState, PortInfo, Severity
 
-
 # ── Suppress expected config warnings in test output ──────────────────────────
 
 @pytest.fixture(autouse=True)

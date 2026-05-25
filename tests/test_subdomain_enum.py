@@ -2,10 +2,7 @@
 
 from unittest.mock import patch
 
-import pytest
-
 from rao.tools.subdomain_enum import SubdomainEnumerator
-
 
 # N19 fix: mock socket.gethostbyname instead of doing real DNS resolution.
 # The old test called gethostbyname("localhost") directly, which is fragile
