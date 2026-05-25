@@ -24,6 +24,27 @@ PRIVATE_RANGES = [
     ipaddress.ip_network("127.0.0.0/8"),
 ]
 
+# Critical blocklist — NEVER scannable, regardless of declared scope.
+# Covers: link-local (AWS/GCP metadata endpoints), multicast, loopback-extended,
+# unspecified address, and broadcast ranges.
+CRITICAL_BLOCKLIST: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
+    ipaddress.ip_network("0.0.0.0/8"),          # "This" network (RFC 1122)
+    ipaddress.ip_network("127.0.0.0/8"),         # Loopback
+    ipaddress.ip_network("169.254.0.0/16"),      # Link-local / cloud metadata (AWS, GCP, Azure)
+    ipaddress.ip_network("224.0.0.0/4"),         # Multicast
+    ipaddress.ip_network("240.0.0.0/4"),         # Reserved (RFC 1112)
+    ipaddress.ip_network("255.255.255.255/32"),  # Broadcast
+    ipaddress.ip_network("::1/128"),             # IPv6 loopback
+    ipaddress.ip_network("fe80::/10"),           # IPv6 link-local
+    ipaddress.ip_network("ff00::/8"),            # IPv6 multicast
+]
+
+CRITICAL_BLOCKLIST_DOMAINS = {
+    "metadata.google.internal",
+    "instance-data",  # AWS EC2 legacy
+    "169.254.169.254",
+}
+
 
 class ScopeError(Exception):
     """Raised when a target is out of scope."""
@@ -91,14 +112,29 @@ class ScopeValidator:
                 return True
 
         # Resolve and check IP
+        # BUG #25 fix: set a socket timeout so DNS resolution cannot block
+        # the CLI indefinitely (system default is often 30s+).
+        old_timeout = socket.getdefaulttimeout()
         try:
+            socket.setdefaulttimeout(5.0)
             ip_str = socket.gethostbyname(domain)
-            ip = ipaddress.ip_address(ip_str)
-            return self._validate_ip(ip)
         except socket.gaierror:
             raise ScopeError(f"Cannot resolve domain: {domain}")
+        finally:
+            socket.setdefaulttimeout(old_timeout)
+
+        ip = ipaddress.ip_address(ip_str)
+        return self._validate_ip(ip)
 
     def _validate_ip(self, ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+        # ── Critical blocklist check (absolute — overrides everything) ──────────
+        for blocked in CRITICAL_BLOCKLIST:
+            if ip in blocked:
+                raise ScopeError(
+                    f"IP {ip} is in the critical blocklist ({blocked}) and can NEVER be scanned. "
+                    "This protects against SSRF attacks and cloud metadata endpoint abuse."
+                )
+
         is_private = any(ip in net for net in PRIVATE_RANGES)
 
         if is_private and not self.allow_private:
@@ -118,6 +154,10 @@ class ScopeValidator:
                 raise ScopeError(f"IP {ip} not in any allowed CIDR range")
 
         return True
+
+    def is_blocked_domain(self, domain: str) -> bool:
+        """Check if a domain is in the critical blocklist."""
+        return domain.lower().strip() in CRITICAL_BLOCKLIST_DOMAINS
 
     def validate_all(self, targets: list[str]) -> list[str]:
         """Validate a list of targets, return only valid ones."""

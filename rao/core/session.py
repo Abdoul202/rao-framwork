@@ -102,6 +102,8 @@ def _serialize_mission(mission: MissionState) -> dict:
         "scope": mission.scope,
         "current_phase": mission.current_phase,
         "errors": mission.errors,
+        # BUG #16 fix: attack_plan is now persisted in sessions
+        "attack_plan": mission.attack_plan,
         "hosts": [
             {
                 "ip": h.ip,
@@ -147,6 +149,8 @@ def _deserialize_mission(data: dict) -> MissionState:
         scope=data.get("scope", [data["target"]]),
         current_phase=data.get("current_phase", "reconnaissance"),
         errors=data.get("errors", []),
+        # BUG #16 fix: restore attack_plan from session file
+        attack_plan=data.get("attack_plan", ""),
     )
 
     for h in data.get("hosts", []):

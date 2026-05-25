@@ -68,20 +68,20 @@ class SubdomainEnumerator:
         return results
 
     def _query_crtsh(self, domain: str) -> list[str]:
-        """Query crt.sh Certificate Transparency logs."""
-        url = f"https://crt.sh/?q=%.{domain}&output=json"
+        """Query crt.sh Certificate Transparency logs with HackerTarget fallback."""
+        # ── Primary source: crt.sh ─────────────────────────────────────────────
         try:
+            url = f"https://crt.sh/?q=%.{domain}&output=json"
             resp = requests.get(url, timeout=15)
             resp.raise_for_status()
             entries = resp.json()
 
-            subdomains = set()
+            subdomains: set[str] = set()
             for entry in entries:
                 name = entry.get("name_value", "")
                 for line in name.split("\n"):
                     line = line.strip().lower()
                     if line.endswith(f".{domain}") or line == domain:
-                        # Skip wildcards
                         if not line.startswith("*"):
                             subdomains.add(line)
 
@@ -89,7 +89,25 @@ class SubdomainEnumerator:
             return list(subdomains)
 
         except Exception as e:
-            logger.warning("crt.sh query failed: %s", e)
+            logger.warning("crt.sh failed (%s), trying HackerTarget fallback…", e)
+
+        # ── Fallback source: HackerTarget (free, no key required) ─────────────
+        try:
+            url = f"https://api.hackertarget.com/hostsearch/?q={domain}"
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            lines = resp.text.strip().splitlines()
+            subdomains = set()
+            for line in lines:
+                if "," in line:
+                    sub = line.split(",")[0].strip().lower()
+                    if sub.endswith(f".{domain}") or sub == domain:
+                        subdomains.add(sub)
+            logger.info("HackerTarget returned %d subdomains", len(subdomains))
+            return list(subdomains)
+
+        except Exception as e:
+            logger.warning("HackerTarget fallback also failed: %s", e)
             return []
 
     def _dns_bruteforce(self, domain: str) -> list[tuple[str, str]]:
@@ -114,9 +132,17 @@ class SubdomainEnumerator:
         return results
 
     def _resolve(self, hostname: str) -> str | None:
-        """Resolve hostname to IP address."""
+        """Resolve hostname to IP address.
+
+        BUG #24 fix: socket.gethostbyname has no built-in timeout parameter.
+        We set the global socket timeout temporarily and restore it after,
+        so slow DNS servers cannot block the ThreadPoolExecutor indefinitely.
+        """
+        old_timeout = socket.getdefaulttimeout()
         try:
-            ip = socket.gethostbyname(hostname)
-            return ip
+            socket.setdefaulttimeout(self.timeout)
+            return socket.gethostbyname(hostname)
         except socket.gaierror:
             return None
+        finally:
+            socket.setdefaulttimeout(old_timeout)

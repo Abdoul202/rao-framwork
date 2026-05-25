@@ -1,0 +1,24 @@
+# Core LLM / Orchestration — borné pour éviter les breaking changes
+langchain>=0.2,<0.4
+langgraph>=0.1,<0.3
+langchain-groq>=0.1,<0.3
+langchain-community>=0.2,<0.4
+
+# Knowledge stores
+neo4j>=5.0,<6.0
+chromadb>=0.4,<1.0
+
+# Tools
+python-nmap>=0.7.1,<0.8
+requests>=2.31,<3.0
+beautifulsoup4>=4.12,<5.0
+
+# Data / config
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0,<3.0
+python-dotenv>=1.0,<2.0
+
+# CLI / Reporting
+click>=8.1,<9.0
+jinja2>=3.1,<4.0
+rich>=13.0,<14.0

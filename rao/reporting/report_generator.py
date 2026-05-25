@@ -15,6 +15,9 @@ from rao.core.state import MissionState, Severity
 
 logger = logging.getLogger(__name__)
 
+# N4 fix: module-level console instance (not re-created on every call)
+_console = Console()
+
 
 def generate_report(mission: MissionState) -> Path:
     """Generate both console output and JSON report."""
@@ -24,16 +27,14 @@ def generate_report(mission: MissionState) -> Path:
 
 def _print_console_report(mission: MissionState) -> None:
     """Rich console output for immediate feedback."""
-    console = Console()
+    _console.print(f"\n{'='*60}", style="bold blue")
+    _console.print("  RAO-Framework - Mission Report", style="bold white")
+    _console.print(f"{'='*60}", style="bold blue")
 
-    console.print(f"\n{'='*60}", style="bold blue")
-    console.print("  RAO-Framework - Mission Report", style="bold white")
-    console.print(f"{'='*60}", style="bold blue")
-
-    console.print(f"\nTarget: {mission.target}")
-    console.print(f"Hosts discovered: {len(mission.hosts)}")
-    console.print(f"Total findings: {len(mission.findings)}")
-    console.print(f"Validated findings: {len(mission.validated_findings)}")
+    _console.print(f"\nTarget: {mission.target}")
+    _console.print(f"Hosts discovered: {len(mission.hosts)}")
+    _console.print(f"Total findings: {len(mission.findings)}")
+    _console.print(f"Validated findings: {len(mission.validated_findings)}")
 
     if mission.validated_findings:
         table = Table(title="\nValidated Findings", show_lines=True)
@@ -58,18 +59,19 @@ def _print_console_report(mission: MissionState) -> None:
             table.add_row(
                 f"[{color}]{f.severity.value.upper()}[/{color}]",
                 f.title[:40],
-                f"{f.host}:{f.port}",
+                # N2 fix: port can be None — display "N/A" instead of "None"
+                f"{f.host}:{f.port if f.port is not None else 'N/A'}",
                 ", ".join(f.cve_ids) if f.cve_ids else "-",
             )
 
-        console.print(table)
+        _console.print(table)
 
     if mission.errors:
-        console.print(f"\n[yellow]Errors ({len(mission.errors)}):[/yellow]")
+        _console.print(f"\n[yellow]Errors ({len(mission.errors)}):[/yellow]")
         for err in mission.errors:
-            console.print(f"  - {err}", style="dim")
+            _console.print(f"  - {err}", style="dim")
 
-    console.print()
+    _console.print()
 
 
 def _save_json_report(mission: MissionState) -> Path:
@@ -81,10 +83,17 @@ def _save_json_report(mission: MissionState) -> Path:
     filename = f"rao_report_{mission.target.replace('.', '_')}_{timestamp}.json"
     filepath = output_dir / filename
 
+    # N1 fix: version from importlib.metadata, not hardcoded
+    try:
+        from importlib.metadata import version as _pkg_version
+        _version = _pkg_version("rao-framework")
+    except Exception:
+        _version = "0.0.0-dev"
+
     report = {
         "meta": {
             "framework": "RAO-Framework",
-            "version": "0.1.0",
+            "version": _version,           # N1 fix
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "target": mission.target,
         },
@@ -124,6 +133,24 @@ def _save_json_report(mission: MissionState) -> Path:
                 "false_positive": f.false_positive,
             }
             for f in mission.validated_findings
+        ],
+        # N3 fix: include attack_plan, web_scans, subdomains in JSON output
+        "attack_plan": mission.attack_plan or None,
+        "web_scans": [
+            {
+                "url": ws.url,
+                "status_code": ws.status_code,
+                "server": ws.server,
+                "technologies": ws.technologies,
+                "missing_headers_count": ws.missing_headers_count,
+                "exposed_paths_count": ws.exposed_paths_count,
+                "cors_issues_count": ws.cors_issues_count,
+            }
+            for ws in mission.web_scans
+        ],
+        "subdomains": [
+            {"subdomain": s.subdomain, "ip": s.ip, "source": s.source}
+            for s in mission.subdomains
         ],
         "errors": mission.errors,
     }

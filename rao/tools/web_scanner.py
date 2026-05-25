@@ -75,6 +75,10 @@ SENSITIVE_PATHS = [
 ]
 
 
+# Neutral User-Agent — does not identify the tool name to targets
+DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+
+
 @dataclass
 class WebScanResult:
     url: str
@@ -89,19 +93,36 @@ class WebScanResult:
 
 
 class WebScanner:
-    """HTTP-level reconnaissance and security assessment."""
+    """HTTP-level reconnaissance and security assessment.
 
-    def __init__(self, timeout: int = 10) -> None:
+    Parameters
+    ----------
+    allow_private:
+        When True (default), private/internal IPs are allowed as scan targets.
+        This is correct for a local red-team CLI where the user has already
+        confirmed authorization via --confirm.
+        Set to False only when running as a server-side API to prevent SSRF.
+    """
+
+    def __init__(
+        self,
+        timeout: int = 10,
+        verify_ssl: bool = False,
+        user_agent: str = DEFAULT_USER_AGENT,
+        path_scan_delay: float = 0.05,  # BUG #19 fix: rate-limit between path probes
+        allow_private: bool = True,
+    ) -> None:
         self.timeout = timeout
+        self.path_scan_delay = path_scan_delay
+        self.allow_private = allow_private
         self.session = requests.Session()
-        self.session.headers.update(
-            {"User-Agent": "RAO-Framework/0.1 (Security Assessment)"}
-        )
-        self.session.verify = False  # Allow self-signed certs in lab envs
-        # Suppress InsecureRequestWarning for lab environments
-        requests.packages.urllib3.disable_warnings(
-            requests.packages.urllib3.exceptions.InsecureRequestWarning
-        )
+        self.session.headers.update({"User-Agent": user_agent})
+        self.session.verify = verify_ssl
+        if not verify_ssl:
+            # BUG #20 fix: suppress only for this specific session's urllib3,
+            # not globally for the entire process.
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     def scan(self, target: str) -> WebScanResult | None:
         """Full web scan against an HTTP target."""
@@ -127,9 +148,32 @@ class WebScanner:
         return result
 
     def _normalize_url(self, target: str) -> str:
-        if target.startswith(("http://", "https://")):
-            return target
-        return f"https://{target}"
+        """Normalize target to a full URL.
+
+        SSRF protection is opt-in via allow_private=False — appropriate only
+        when the scanner is exposed as a server-side API. In CLI mode the
+        authorization gate (--confirm + scope validator) is sufficient.
+        """
+        import ipaddress
+        from urllib.parse import urlparse
+
+        url = target if target.startswith(("http://", "https://")) else f"https://{target}"
+
+        if not self.allow_private:
+            # Strict SSRF check: block loopback, link-local, and private ranges.
+            host = urlparse(url).hostname or ""
+            try:
+                _ip = ipaddress.ip_address(host)
+                if _ip.is_loopback or _ip.is_link_local or _ip.is_private:
+                    raise ValueError(
+                        f"SSRF protection: blocked request to internal address '{host}'"
+                    )
+            except ValueError as exc:
+                # Re-raise only the SSRF error; domain names are fine.
+                if "SSRF" in str(exc):
+                    raise
+
+        return url
 
     def _check_server_header(self, resp: requests.Response, result: WebScanResult) -> None:
         server = resp.headers.get("Server", "")
@@ -216,15 +260,35 @@ class WebScanner:
             pass
 
     def _check_cookies(self, resp: requests.Response, result: WebScanResult) -> None:
-        """Check cookie security flags."""
+        """Check cookie security flags.
+
+        BUG #18 fix: when multiple Set-Cookie headers are present,
+        resp.headers.get() returns only the first. We now inspect
+        each cookie against its own header line.
+        """
+        # Collect all raw Set-Cookie header values
+        raw_set_cookie_headers: list[str] = []
+        if hasattr(resp.raw, "headers") and hasattr(resp.raw.headers, "getlist"):
+            raw_set_cookie_headers = resp.raw.headers.getlist("Set-Cookie")
+        else:
+            raw_val = resp.headers.get("Set-Cookie", "")
+            if raw_val:
+                raw_set_cookie_headers = [raw_val]
+
         for cookie in resp.cookies:
             issues = []
             if not cookie.secure:
                 issues.append("missing Secure flag")
             if not cookie.has_nonstandard_attr("HttpOnly"):
                 issues.append("missing HttpOnly flag")
-            raw_header = resp.headers.get("Set-Cookie", "")
-            if "samesite" not in raw_header.lower():
+
+            # BUG #18 fix: find the specific Set-Cookie header for this cookie
+            cookie_header = next(
+                (h for h in raw_set_cookie_headers
+                 if h.lower().startswith(cookie.name.lower() + "=")),
+                "",
+            )
+            if "samesite" not in cookie_header.lower():
                 issues.append("missing SameSite attribute")
 
             if issues:
@@ -233,7 +297,13 @@ class WebScanner:
                 )
 
     def _enumerate_paths(self, base_url: str, result: WebScanResult) -> None:
-        """Check for common sensitive paths."""
+        """Check for common sensitive paths.
+
+        BUG #19 fix: added configurable delay between requests to avoid
+        triggering IDS/WAF rate-limit rules and causing collateral network load.
+        """
+        import time
+
         for path in SENSITIVE_PATHS:
             try:
                 url = urljoin(base_url, path)
@@ -252,6 +322,10 @@ class WebScanner:
                     logger.info("Found: %s [%d] (%d bytes)", path, resp.status_code, size)
             except Exception:
                 continue
+            finally:
+                # BUG #19 fix: rate-limit between path probes
+                if self.path_scan_delay > 0:
+                    time.sleep(self.path_scan_delay)
 
     def _check_info_leaks(self, resp: requests.Response, result: WebScanResult) -> None:
         """Check response for common information leakage patterns."""

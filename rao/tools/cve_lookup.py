@@ -22,13 +22,22 @@ class CVELookup:
         self._last_request_time = 0.0
         # NVD rate limit: 5 req/30s without key, 50 req/30s with key
         self._min_interval = 0.6 if self.api_key else 6.0
+        # Local cache to survive NVD outages
+        from rao.tools.cve_cache import CVECache
+        self._cache = CVECache()
 
     def search(self, keyword: str, max_results: int = 10) -> list[dict]:
         """
         Search NVD for CVEs matching the keyword.
 
         Returns list of dicts with keys: id, description, severity, score.
+        Results are cached locally for 7 days to survive API outages.
         """
+        # Check local cache first
+        cached = self._cache.get(keyword)
+        if cached is not None:
+            return cached
+
         self._rate_limit()
 
         headers = {}
@@ -50,7 +59,10 @@ class CVELookup:
             logger.warning("NVD API request failed for '%s': %s", keyword, e)
             return []
 
-        return self._parse_response(data)
+        results = self._parse_response(data)
+        # Store in cache for future offline use
+        self._cache.set(keyword, results)
+        return results
 
     def _parse_response(self, data: dict) -> list[dict]:
         """Extract relevant fields from the NVD API response."""

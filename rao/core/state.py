@@ -46,14 +46,22 @@ class Finding:
 
 @dataclass
 class WebScanInfo:
-    """Stored web scan results for a host."""
+    """Summary of a web scan stored inside MissionState.
+
+    Stores counts (not full detail lists) — keeps the mission state light.
+    The full detail lists live in WebScanResult (web_scanner.py) during the
+    active scan and are only needed for display / HTML report generation.
+
+    Field names use _count suffix to avoid confusion with WebScanResult's
+    list attributes of similar names (BUG #1 fix).
+    """
     url: str
     status_code: int = 0
     server: str = ""
     technologies: list[str] = field(default_factory=list)
-    missing_headers: int = 0
-    exposed_paths: int = 0
-    cors_issues: int = 0
+    missing_headers_count: int = 0
+    exposed_paths_count: int = 0
+    cors_issues_count: int = 0
 
 
 @dataclass
@@ -72,7 +80,10 @@ class MissionState:
     hosts: list[HostInfo] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     validated_findings: list[Finding] = field(default_factory=list)
+    # BUG #3 fix: web_scans and subdomains are now populated by the CLI
     web_scans: list[WebScanInfo] = field(default_factory=list)
     subdomains: list[SubdomainInfo] = field(default_factory=list)
     current_phase: str = "reconnaissance"
     errors: list[str] = field(default_factory=list)
+    # Operator output: raw attack plan text from LLM (plain text, intentional)
+    attack_plan: str = ""

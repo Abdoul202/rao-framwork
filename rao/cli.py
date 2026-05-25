@@ -20,16 +20,23 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+# BUG #28 fix: single source of truth for the version string
+try:
+    from importlib.metadata import version as _pkg_version
+    _VERSION = _pkg_version("rao-framework")
+except Exception:
+    _VERSION = "0.0.0-dev"
+
 console = Console()
 
-BANNER = """[bold red]
+BANNER = f"""[bold red]
   ██████╗  █████╗  ██████╗
   ██╔══██╗██╔══██╗██╔═══██╗
   ██████╔╝███████║██║   ██║
   ██╔══██╗██╔══██║██║   ██║
   ██║  ██║██║  ██║╚██████╔╝
   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝[/bold red]
-[dim]  Multi-Agent Red Team Framework v0.1.0[/dim]
+[dim]  Multi-Agent Red Team Framework v{_VERSION}[/dim]
 """
 
 
@@ -42,8 +49,22 @@ def _setup_logging(verbose: bool) -> None:
     )
 
 
+# ── Shared authorization guard ─────────────────────────────────────────────────
+
+def _require_confirm(target: str, confirm: bool) -> None:
+    """BUG #27 fix: centralized authorization gate used by all active-scan commands."""
+    if not confirm:
+        console.print(
+            "[bold red]ERROR:[/bold red] You must pass [bold]--confirm[/bold] to confirm "
+            "you have explicit written authorization to scan this target.\n"
+            f"  Example: rao scan {target} --confirm"
+        )
+        sys.exit(1)
+    _log_authorization(target)
+
+
 @click.group()
-@click.version_option(version="0.1.0", prog_name="rao")
+@click.version_option(version=_VERSION, prog_name="rao")  # BUG #28 fix: uses _VERSION
 def cli():
     """RAO-Framework - Multi-Agent Autonomous Red Teaming System."""
     pass
@@ -57,14 +78,38 @@ def cli():
 @click.option("--save", is_flag=True, help="Save session for later resume")
 @click.option("--html", is_flag=True, help="Generate HTML report")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-def scan(target, scope, no_web, no_subdomains, save, html, verbose):
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="REQUIRED: Confirm you have written authorization to scan this target.",
+)
+def scan(target, scope, no_web, no_subdomains, save, html, verbose, confirm):
     """Run a full red team mission against TARGET."""
     _setup_logging(verbose)
     console.print(BANNER)
 
+    # Legal gate
+    _require_confirm(target, confirm)
+
+    # BUG #26 fix: use a set to deduplicate — target was being appended even
+    # when it was already in scope, causing the Scout to scan it twice.
+    scope_set = set(scope) | {target}
+    scope_list = sorted(scope_set)
+
+    # Scope validation
+    from rao.tools.scope_validator import ScopeValidator
+
+    validator = ScopeValidator(allowed_targets=scope_list, allow_private=True)
+    try:
+        validator.validate(target)
+    except Exception as e:
+        console.print(f"[red]Scope error: {e}[/red]")
+        sys.exit(1)
+
     console.print(Panel(
         f"[bold]Target:[/bold] {target}\n"
-        f"[bold]Scope:[/bold] {', '.join(scope) if scope else target}\n"
+        f"[bold]Scope:[/bold] {', '.join(scope_list)}\n"
         f"[bold]Web scan:[/bold] {'No' if no_web else 'Yes'}\n"
         f"[bold]Subdomains:[/bold] {'No' if no_subdomains else 'Yes'}",
         title="[red]Mission Config[/red]",
@@ -72,18 +117,6 @@ def scan(target, scope, no_web, no_subdomains, save, html, verbose):
     ))
 
     console.print("\n[yellow]DISCLAIMER: Authorized testing only. Ensure you have written permission.[/yellow]\n")
-
-    # Scope validation
-    from rao.tools.scope_validator import ScopeValidator
-
-    scope_list = list(scope) + [target] if scope else [target]
-    validator = ScopeValidator(allowed_targets=scope_list, allow_private=True)
-
-    try:
-        validator.validate(target)
-    except Exception as e:
-        console.print(f"[red]Scope error: {e}[/red]")
-        sys.exit(1)
 
     # Run main pipeline
     from rao.core.orchestrator import OCC
@@ -95,6 +128,7 @@ def scan(target, scope, no_web, no_subdomains, save, html, verbose):
     # Web scanning
     web_results = []
     if not no_web:
+        from rao.core.state import WebScanInfo
         from rao.tools.web_scanner import WebScanner
 
         scanner = WebScanner()
@@ -107,19 +141,36 @@ def scan(target, scope, no_web, no_subdomains, save, html, verbose):
                         result = scanner.scan(url)
                         if result:
                             web_results.append(result)
-                            # Convert web findings to mission findings
                             _web_to_findings(result, mission)
+                            # BUG #3 fix: actually populate mission.web_scans
+                            mission.web_scans.append(WebScanInfo(
+                                url=result.url,
+                                status_code=result.status_code,
+                                server=result.server,
+                                technologies=result.technologies,
+                                missing_headers_count=len(result.missing_headers),
+                                exposed_paths_count=len(result.exposed_paths),
+                                cors_issues_count=len(result.cors_issues),
+                            ))
 
     # Subdomain enumeration
     subdomains = []
     if not no_subdomains and not _is_ip(target):
+        from rao.core.state import SubdomainInfo
         from rao.tools.subdomain_enum import SubdomainEnumerator
 
         enumerator = SubdomainEnumerator()
         with console.status("[bold blue]Enumerating subdomains...[/bold blue]"):
             subdomains = enumerator.enumerate(target)
+            # BUG #3 fix: store subdomains in mission state (persisted in sessions)
+            for s in subdomains:
+                mission.subdomains.append(SubdomainInfo(
+                    subdomain=s["subdomain"],
+                    ip=s["ip"],
+                    source=s.get("source", ""),
+                ))
 
-    # Reports
+    # Report generation (single location — BUG #6 fix already in orchestrator)
     from rao.reporting.report_generator import generate_report
 
     generate_report(mission)
@@ -144,10 +195,20 @@ def scan(target, scope, no_web, no_subdomains, save, html, verbose):
 @cli.command()
 @click.argument("target")
 @click.option("--verbose", "-v", is_flag=True)
-def recon(target, verbose):
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="REQUIRED: Confirm you have written authorization to scan this target.",
+)
+def recon(target, verbose, confirm):
     """Scout-only reconnaissance (nmap + web scan)."""
     _setup_logging(verbose)
     console.print(BANNER)
+
+    # BUG #27 fix: recon also requires --confirm (was missing the authorization gate)
+    _require_confirm(target, confirm)
+
     console.print(f"[bold]Recon-only mode for {target}[/bold]\n")
 
     from rao.agents.scout import ScoutAgent
@@ -176,18 +237,31 @@ def recon(target, verbose):
     generate_report(mission)
 
     if web_results:
-        console.print(f"\n[bold]Web scan results:[/bold]")
+        console.print("\n[bold]Web scan results:[/bold]")
         for wr in web_results:
-            console.print(f"  {wr.url} - {len(wr.missing_headers)} missing headers, {len(wr.exposed_paths)} exposed paths")
+            console.print(
+                f"  {wr.url} - "
+                f"{len(wr.missing_headers)} missing headers, "
+                f"{len(wr.exposed_paths)} exposed paths"
+            )
 
 
 @cli.command()
 @click.argument("target")
 @click.option("--verbose", "-v", is_flag=True)
-def webscan(target, verbose):
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="REQUIRED: Confirm you have written authorization to scan this target.",
+)
+def webscan(target, verbose, confirm):
     """Web-only security scan (headers, paths, CORS, cookies)."""
     _setup_logging(verbose)
     console.print(BANNER)
+
+    # BUG #27 fix: webscan also requires --confirm (was missing the authorization gate)
+    _require_confirm(target, confirm)
 
     from rao.tools.web_scanner import WebScanner
 
@@ -244,7 +318,7 @@ def webscan(target, verbose):
 @click.argument("domain")
 @click.option("--verbose", "-v", is_flag=True)
 def subdomains(domain, verbose):
-    """Enumerate subdomains for a domain."""
+    """Enumerate subdomains for a domain (passive — no --confirm required)."""
     _setup_logging(verbose)
     console.print(BANNER)
 
@@ -349,6 +423,29 @@ def sessions_resume(name, html, verbose):
 
         path = generate_html_report(mission)
         console.print(f"\n[green]HTML report: {path}[/green]")
+
+
+# ── Internal helpers ───────────────────────────────────────────────────────────
+
+def _log_authorization(target: str) -> None:
+    """Append a timestamped authorization record to the audit log."""
+    import datetime
+    import os
+    from pathlib import Path
+
+    from rao.config import settings
+
+    log_path = Path(settings.report_output_dir) / "audit.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    entry = (
+        f"{datetime.datetime.utcnow().isoformat()}Z"
+        f" | AUTHORIZED_SCAN"
+        f" | target={target}"
+        f" | pid={os.getpid()}\n"
+    )
+    with open(log_path, "a") as fh:
+        fh.write(entry)
 
 
 def _web_to_findings(web_result, mission) -> None:

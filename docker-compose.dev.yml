@@ -1,0 +1,105 @@
+version: "3.9"
+
+# RAO-Framework — Developer Environment
+#
+# Provides all backing services needed to run RAO locally with no cloud dependencies.
+# Includes a local LLM via Ollama (mistral by default).
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml logs -f ollama  # follow Ollama logs
+#   docker compose -f docker-compose.dev.yml down -v         # teardown + wipe volumes
+#
+# First run: Ollama will download the model (~4GB). This only happens once.
+# To use a different model: set OLLAMA_MODEL in your .env file.
+
+services:
+
+  # ── Local LLM (no API key required) ─────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rao_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Pull the default model on first start
+  ollama-init:
+    image: curlimages/curl:latest
+    container_name: rao_ollama_init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        echo 'Pulling model: ${OLLAMA_MODEL:-mistral}...' &&
+        curl -sf -X POST http://ollama:11434/api/pull
+          -H 'Content-Type: application/json'
+          -d '{\"name\": \"${OLLAMA_MODEL:-mistral}\"}' &&
+        echo 'Model ready.'
+      "
+    restart: "no"
+
+  # ── Vector store (embeddings / knowledge base) ───────────────────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: rao_chromadb
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/.chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Graph database (mission persistence) ─────────────────────────────────────
+  neo4j:
+    image: neo4j:5-community
+    container_name: rao_neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"   # Browser UI: http://localhost:7474
+      - "7687:7687"   # Bolt protocol (used by rao)
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-rao_dev_password}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USER:-neo4j}", "-p", "${NEO4J_PASSWORD:-rao_dev_password}", "RETURN 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  ollama_data:
+    driver: local
+  chroma_data:
+    driver: local
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+
+networks:
+  default:
+    name: rao_dev_network

@@ -1,10 +1,13 @@
 """Central configuration loaded from environment variables."""
 
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
+
+_cfg_logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -14,7 +17,18 @@ ROOT_DIR = Path(__file__).parent.parent
 class Neo4jSettings(BaseSettings):
     uri: str = Field(default="bolt://localhost:7687", alias="NEO4J_URI")
     user: str = Field(default="neo4j", alias="NEO4J_USER")
-    password: str = Field(default="rao_framework_dev", alias="NEO4J_PASSWORD")
+    # BUG #29 fix: no hardcoded default password in source code.
+    # Set NEO4J_PASSWORD in your .env file.
+    password: str = Field(default="", alias="NEO4J_PASSWORD")
+
+    @model_validator(mode="after")
+    def warn_if_no_password(self) -> "Neo4jSettings":
+        if not self.password:
+            _cfg_logger.warning(
+                "NEO4J_PASSWORD is not set. Neo4j connection will likely fail. "
+                "Add NEO4J_PASSWORD=yourpassword to your .env file."
+            )
+        return self
 
 
 class ChromaSettings(BaseSettings):
