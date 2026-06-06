@@ -108,7 +108,14 @@ def scan(target, scope, no_web, no_subdomains, no_ssl, no_osint, nuclei,
 
     # BUG #26 fix: use a set to deduplicate — target was being appended even
     # when it was already in scope, causing the Scout to scan it twice.
-    scope_set = set(scope) | {target}
+    # Also normalize: ScopeValidator expects hostname/IP, not a full URL.
+    _host = target
+    for _scheme in ("https://", "http://"):
+        if _host.startswith(_scheme):
+            _host = _host[len(_scheme):]
+    _host = _host.split("/")[0].rstrip(":")
+
+    scope_set = set(scope) | {_host}
     scope_list = sorted(scope_set)
 
     # Scope validation
@@ -116,7 +123,7 @@ def scan(target, scope, no_web, no_subdomains, no_ssl, no_osint, nuclei,
 
     validator = ScopeValidator(allowed_targets=scope_list, allow_private=True)
     try:
-        validator.validate(target)
+        validator.validate(_host)
     except Exception as e:
         console.print(f"[red]Scope error: {e}[/red]")
         sys.exit(1)
@@ -759,13 +766,21 @@ def audit(
 
     do_html = html and not no_html
 
-    scope_set = set(scope) | {target}
+    # Normalize: ScopeValidator expects hostname/IP, not a full URL.
+    # Strip scheme (https://, http://) and trailing path/slash.
+    _host = target
+    for _scheme in ("https://", "http://"):
+        if _host.startswith(_scheme):
+            _host = _host[len(_scheme):]
+    _host = _host.split("/")[0].rstrip(":")   # remove port-less trailing colon too
+
+    scope_set = set(scope) | {_host}
     scope_list = sorted(scope_set)
 
     from rao.tools.scope_validator import ScopeValidator
     validator = ScopeValidator(allowed_targets=scope_list, allow_private=True)
     try:
-        validator.validate(target)
+        validator.validate(_host)
     except Exception as e:
         console.print(f"[red]Scope error: {e}[/red]")
         sys.exit(1)
