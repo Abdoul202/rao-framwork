@@ -1,4 +1,4 @@
-# CLI Reference — RAO-Framework
+# CLI Reference — RAO-Framework v0.5.0
 
 ## Vue d'ensemble
 
@@ -12,7 +12,11 @@ Options:
 Commandes:
   scan        Scan complet (nmap + CVE + web + subdomains + rapport)
   recon       Reconnaissance rapide (nmap + web scan)
-  webscan     Scan web uniquement (headers, paths, CORS, cookies)
+  webscan     Scan web (headers, paths, CORS, cookies, injections)
+  ssl         Analyse SSL/TLS approfondie
+  osint       Collecte OSINT multi-sources
+  nuclei-scan Scan Nuclei (9000+ templates CVE)
+  jwt-scan    Analyse de sécurité JWT
   subdomains  Énumération de sous-domaines (passif)
   sessions    Gestion des sessions sauvegardées
 ```
@@ -153,6 +157,102 @@ rao webscan TARGET [OPTIONS]
 rao webscan https://target.local --confirm
 rao webscan 192.168.1.100 --confirm
 rao webscan http://api.example.com:8080 --confirm
+
+# + Injections actives (SQLi, XSS, SSTI, XXE, CMDi, CRLF, NoSQL, SSRF, IDOR…)
+rao webscan https://target.local --confirm --inject
+
+# + Test d'authentification (credentials par défaut + rate limiting)
+rao webscan https://target.local --confirm --inject --test-auth
+```
+
+---
+
+## `rao jwt-scan` — Analyse de sécurité JWT
+
+Analyse statique et dynamique d'un token JWT. **100% offline par défaut** (aucun appel réseau sans `--target`).
+
+```bash
+rao jwt-scan TOKEN [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Description |
+|---|---|
+| `TOKEN` | Token JWT complet (`eyJ...`) |
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--target URL` | URL cible pour le test live alg:none (envoie le token forgé) |
+| `--verbose, -v` | Mode verbeux |
+
+### Ce qui est analysé
+
+| Vecteur | Description |
+|---|---|
+| **alg:none** | Détecte si le header déclare `alg:none` (signature ignorée) |
+| **Secret faible** | Brute-force offline HS256/HS384/HS512 (40+ secrets courants : `secret`, `password`, `changeme`…) |
+| **Token expiré** | Vérifie le claim `exp` |
+| **Durée excessive** | Flag si validité > 1 an |
+| **`exp` absent** | Token valide à vie |
+| **`iat` absent** | Impossible de valider l'âge du token |
+| **Données sensibles** | Détecte `password`, `api_key`, `credit_card`… dans le payload non chiffré |
+
+### Exemples
+
+```bash
+# Analyse complète offline
+rao jwt-scan eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc
+
+# + Test live alg:none sur une URL cible
+rao jwt-scan <token> --target https://api.example.com/profile
+
+# Exemple de sortie
+# ┌─────────────────────────────────────────────┐
+# │ JWT Security Analysis                        │
+# ├──────────────┬──────────────────────────────┤
+# │ Algorithm    │ HS256                        │
+# │ Subject      │ user_42                      │
+# │ Expires      │ 2027-01-01T00:00:00Z         │
+# ├──────────────┴──────────────────────────────┤
+# │ FINDINGS                                    │
+# │ [HIGH] Weak secret found: "secret"          │
+# │ [INFO] Token expires in 577 days (>1 year)  │
+# └─────────────────────────────────────────────┘
+```
+
+---
+
+## `rao ssl` — Analyse SSL/TLS
+
+Analyse approfondie de la configuration TLS d'un serveur.
+
+```bash
+rao ssl TARGET [OPTIONS]
+```
+
+Vérifie : protocoles (SSLv2/3, TLS 1.0/1.1), certificat (expiry, CN, SANs), HSTS, chiffrement faible, indicateur Heartbleed.
+
+---
+
+## `rao osint` — Collecte OSINT
+
+Collecte d'informations depuis 7 sources publiques (Shodan, Censys, WHOIS, LeakIX, URLScan, GreyNoise, HaveIBeenPwned).
+
+```bash
+rao osint TARGET [OPTIONS]
+```
+
+---
+
+## `rao nuclei-scan` — Scan Nuclei
+
+Lance Nuclei avec les templates communautaires (9000+) sur la cible.
+
+```bash
+rao nuclei-scan TARGET [OPTIONS]
 ```
 
 ---

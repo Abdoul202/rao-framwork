@@ -6,6 +6,10 @@ Usage:
     rao recon <target>                Scout-only (nmap + web scan)
     rao webscan <target>              Web-only scan (headers, paths, CORS)
     rao subdomains <domain>           Subdomain enumeration
+    rao ssl <target>                  SSL/TLS analysis
+    rao osint <domain>                Passive OSINT collection
+    rao nuclei-scan <target>          Nuclei template-based vulnerability scan
+    rao jwt-scan <token>              JWT security analysis (v0.5)
     rao sessions list                 List saved sessions
     rao sessions resume <name>        Resume a saved session
 """
@@ -74,6 +78,16 @@ def cli():
 @click.option("--scope", "-s", multiple=True, help="Additional scope entries (IPs, CIDRs, domains)")
 @click.option("--no-web", is_flag=True, help="Skip web scanning")
 @click.option("--no-subdomains", is_flag=True, help="Skip subdomain enumeration")
+@click.option("--no-ssl", is_flag=True, help="Skip SSL/TLS analysis")
+@click.option("--no-osint", is_flag=True, help="Skip OSINT collection")
+@click.option("--nuclei", is_flag=True, help="Run Nuclei template-based scanner (requires nuclei installed)")
+@click.option("--nuclei-severity", default="medium,high,critical", show_default=True,
+              help="Nuclei severity filter")
+@click.option("--profile", "-p",
+              type=click.Choice(["quick", "full", "stealth", "udp", "vuln", "smb", "web"]),
+              default="quick", show_default=True,
+              help="Nmap scan profile")
+@click.option("--inject", is_flag=True, help="Enable active SQLi/XSS injection tests in web scan")
 @click.option("--save", is_flag=True, help="Save session for later resume")
 @click.option("--html", is_flag=True, help="Generate HTML report")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
@@ -83,7 +97,8 @@ def cli():
     default=False,
     help="REQUIRED: Confirm you have written authorization to scan this target.",
 )
-def scan(target, scope, no_web, no_subdomains, save, html, verbose, confirm):
+def scan(target, scope, no_web, no_subdomains, no_ssl, no_osint, nuclei,
+         nuclei_severity, profile, inject, save, html, verbose, confirm):
     """Run a full red team mission against TARGET."""
     _setup_logging(verbose)
     console.print(BANNER)
@@ -109,8 +124,12 @@ def scan(target, scope, no_web, no_subdomains, save, html, verbose, confirm):
     console.print(Panel(
         f"[bold]Target:[/bold] {target}\n"
         f"[bold]Scope:[/bold] {', '.join(scope_list)}\n"
-        f"[bold]Web scan:[/bold] {'No' if no_web else 'Yes'}\n"
-        f"[bold]Subdomains:[/bold] {'No' if no_subdomains else 'Yes'}",
+        f"[bold]Nmap profile:[/bold] {profile}\n"
+        f"[bold]Web scan:[/bold] {'No' if no_web else 'Yes'}{'  [inject]' if inject and not no_web else ''}\n"
+        f"[bold]SSL/TLS:[/bold] {'No' if no_ssl else 'Yes'}\n"
+        f"[bold]Subdomains:[/bold] {'No' if no_subdomains else 'Yes'}\n"
+        f"[bold]OSINT:[/bold] {'No' if no_osint else 'Yes'}\n"
+        f"[bold]Nuclei:[/bold] {'Yes (' + nuclei_severity + ')' if nuclei else 'No'}",
         title="[red]Mission Config[/red]",
         border_style="red",
     ))
@@ -130,7 +149,7 @@ def scan(target, scope, no_web, no_subdomains, save, html, verbose, confirm):
         from rao.core.state import WebScanInfo
         from rao.tools.web_scanner import WebScanner
 
-        scanner = WebScanner()
+        scanner = WebScanner(test_injections=inject)
         with console.status("[bold blue]Web scanning...[/bold blue]"):
             for host in mission.hosts:
                 for port in host.ports:
@@ -151,6 +170,91 @@ def scan(target, scope, no_web, no_subdomains, save, html, verbose, confirm):
                                 exposed_paths_count=len(result.exposed_paths),
                                 cors_issues_count=len(result.cors_issues),
                             ))
+                            # Surface WAF / SQLi / XSS findings
+                            if result.waf_detected:
+                                console.print(f"  [yellow]WAF detected:[/yellow] {', '.join(result.waf_detected)}")
+                            if result.sqli_indicators:
+                                console.print(f"  [red]SQLi indicators:[/red] {len(result.sqli_indicators)} param(s)")
+                            if result.xss_indicators:
+                                console.print(f"  [red]XSS indicators:[/red] {len(result.xss_indicators)} param(s)")
+
+    # SSL/TLS analysis
+    if not no_ssl:
+        from rao.core.state import SSLFinding
+        from rao.tools.ssl_analyzer import SSLAnalyzer
+
+        ssl_analyzer = SSLAnalyzer()
+        with console.status("[bold blue]SSL/TLS analysis...[/bold blue]"):
+            for host in mission.hosts:
+                for port in host.ports:
+                    if port.port in (443, 8443) or "ssl" in port.service.lower() or "https" in port.service.lower():
+                        ssl_result = ssl_analyzer.analyze(host.ip, port.port)
+                        for f in ssl_result.findings:
+                            mission.ssl_findings.append(SSLFinding(
+                                host=host.ip,
+                                port=port.port,
+                                severity=f["severity"],
+                                title=f["title"],
+                                detail=f["detail"],
+                            ))
+                            # Also inject into mission findings for Critic consideration
+                            from rao.core.state import Finding, Severity
+                            sev = {"critical": Severity.CRITICAL, "high": Severity.HIGH,
+                                   "medium": Severity.MEDIUM, "low": Severity.LOW}.get(
+                                f["severity"], Severity.INFO)
+                            mission.findings.append(Finding(
+                                title=f["title"], severity=sev,
+                                description=f["detail"],
+                                evidence=f"SSL analysis: {host.ip}:{port.port}",
+                                host=host.ip, port=port.port,
+                            ))
+
+    # OSINT collection
+    if not no_osint and not _is_ip(target):
+        from rao.core.state import OSINTSummary
+        from rao.tools.osint import OSINTCollector
+
+        collector = OSINTCollector()
+        with console.status("[bold blue]OSINT collection...[/bold blue]"):
+            osint_result = collector.collect(target)
+            mission.osint = OSINTSummary(
+                target=target,
+                registrar=osint_result.whois.get("registrar", ""),
+                shodan_ports=osint_result.shodan_info.get("open_ports", []),
+                shodan_vulns=osint_result.shodan_info.get("vulns", []),
+                otx_pulse_count=len(osint_result.otx_pulses),
+                emails_found=len(osint_result.emails),
+                github_leaks=len(osint_result.github_results),
+                google_dorks=osint_result.google_dorks,
+                findings=osint_result.findings,
+            )
+            if osint_result.findings:
+                console.print(f"  [yellow]OSINT:[/yellow] {len(osint_result.findings)} findings")
+            # Feed OSINT findings into mission.findings so Critic can validate them
+            _osint_to_findings(osint_result.findings, target, mission)
+
+    # Nuclei scan
+    if nuclei:
+        from rao.tools.nuclei_plugin import nuclei_plugin
+
+        if not nuclei_plugin.is_available():
+            console.print("[yellow]Nuclei not installed — skipping. Install: go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest[/yellow]")
+        else:
+            scan_targets = [target]
+            # Also scan discovered web services
+            for ws in mission.web_scans:
+                if ws.url not in scan_targets:
+                    scan_targets.append(ws.url)
+
+            with console.status(f"[bold blue]Nuclei scanning ({nuclei_severity})...[/bold blue]"):
+                for scan_target in scan_targets[:5]:  # cap to avoid runaway
+                    tool_result = nuclei_plugin.run(scan_target, severity=nuclei_severity)
+                    if tool_result.success:
+                        nf = tool_result.data.get("rao_findings", [])
+                        mission.nuclei_findings.extend(nf)
+                        mission.validated_findings.extend(nf)
+                        if nf:
+                            console.print(f"  [red]Nuclei:[/red] {len(nf)} findings on {scan_target}")
 
     # Subdomain enumeration
     subdomains = []
@@ -168,6 +272,10 @@ def scan(target, scope, no_web, no_subdomains, save, html, verbose, confirm):
                     ip=s["ip"],
                     source=s.get("source", ""),
                 ))
+
+    # Post-pipeline Critic pass — validate web/SSL/OSINT findings that were added
+    # after the main OCC pipeline (Scout → Librarian → Critic) already ran.
+    _run_post_scan_critic(mission, console)
 
     # Report generation (single location — BUG #6 fix already in orchestrator)
     from rao.reporting.report_generator import generate_report
@@ -342,6 +450,258 @@ def subdomains(domain, verbose):
     console.print(table)
 
 
+@cli.command()
+@click.argument("target")
+@click.option("--port", default=443, show_default=True, help="Port to analyze")
+@click.option("--verbose", "-v", is_flag=True)
+@click.option(
+    "--confirm", is_flag=True, default=False,
+    help="REQUIRED: Confirm you have written authorization to scan this target.",
+)
+def ssl(target, port, verbose, confirm):
+    """SSL/TLS security analysis (certificate, protocols, ciphers, HSTS)."""
+    _setup_logging(verbose)
+    console.print(BANNER)
+    _require_confirm(target, confirm)
+
+    from rao.tools.ssl_analyzer import SSLAnalyzer
+
+    analyzer = SSLAnalyzer()
+    with console.status(f"[bold blue]Analyzing SSL/TLS on {target}:{port}...[/bold blue]"):
+        result = analyzer.analyze(target, port)
+
+    if result.error:
+        console.print(f"[red]Error: {result.error}[/red]")
+        return
+
+    console.print(f"\n[bold]SSL/TLS Analysis — {target}:{port}[/bold]")
+    console.print(f"  Supported protocols: {', '.join(result.supported_protocols) or 'Unknown'}")
+    if result.weak_protocols:
+        console.print(f"  [red]Weak protocols:[/red] {', '.join(result.weak_protocols)}")
+    console.print(f"  Cipher suite: {result.cipher_suite or 'Unknown'}")
+    if result.weak_ciphers_detected:
+        console.print(f"  [red]Weak ciphers:[/red] {', '.join(result.weak_ciphers_detected)}")
+
+    if result.cert.subject:
+        console.print(f"\n  Certificate: {result.cert.subject}")
+        console.print(f"  Issuer: {result.cert.issuer}")
+        console.print(f"  Expires: {result.cert.not_after} ({result.cert.days_until_expiry} days)")
+        if result.cert.is_expired:
+            console.print("  [red]EXPIRED![/red]")
+        if result.cert.is_self_signed:
+            console.print("  [red]Self-signed certificate[/red]")
+        if result.cert.hostname_mismatch:
+            console.print("  [red]Hostname mismatch![/red]")
+
+    console.print(f"\n  HSTS: {'✓ present' if result.hsts_present else '[red]✗ missing[/red]'}")
+
+    if result.findings:
+        table = Table(title="SSL/TLS Findings")
+        table.add_column("Severity", style="yellow")
+        table.add_column("Finding", style="cyan")
+        table.add_column("Detail")
+        for f in result.findings:
+            sev_color = {"critical": "bold red", "high": "red", "medium": "yellow",
+                         "low": "dim", "info": "dim"}.get(f["severity"], "white")
+            table.add_row(
+                f"[{sev_color}]{f['severity'].upper()}[/{sev_color}]",
+                f["title"], f["detail"][:80]
+            )
+        console.print(table)
+    else:
+        console.print("\n[green]No SSL/TLS issues detected.[/green]")
+
+
+@cli.command()
+@click.argument("domain")
+@click.option("--verbose", "-v", is_flag=True)
+def osint(domain, verbose):
+    """Passive OSINT collection (WHOIS, Shodan, OTX, Hunter.io, GitHub — no --confirm required)."""
+    _setup_logging(verbose)
+    console.print(BANNER)
+
+    from rao.tools.osint import OSINTCollector
+
+    collector = OSINTCollector()
+    with console.status(f"[bold blue]Collecting OSINT for {domain}...[/bold blue]"):
+        result = collector.collect(domain)
+
+    console.print(f"\n[bold]OSINT Report — {domain}[/bold]")
+
+    if result.whois:
+        console.print("\n[bold]WHOIS[/bold]")
+        for k, v in result.whois.items():
+            if v:
+                console.print(f"  {k}: {v}")
+
+    if result.shodan_info:
+        console.print("\n[bold]Shodan[/bold]")
+        console.print(f"  Open ports: {result.shodan_info.get('open_ports', [])}")
+        if result.shodan_info.get("vulns"):
+            console.print(f"  [red]Known CVEs: {', '.join(result.shodan_info['vulns'])}[/red]")
+
+    if result.otx_pulses:
+        console.print(f"\n[bold yellow]AlienVault OTX — {len(result.otx_pulses)} threat reports[/bold yellow]")
+        for p in result.otx_pulses[:3]:
+            console.print(f"  • {p['name']}")
+
+    if result.emails:
+        console.print(f"\n[bold]Hunter.io — {len(result.emails)} emails found[/bold]")
+        for e in result.emails[:5]:
+            console.print(f"  {e['email']} ({e.get('position', '')})")
+
+    if result.github_results:
+        console.print(f"\n[bold red]GitHub — {len(result.github_results)} potential leaks[/bold red]")
+        for g in result.github_results[:5]:
+            console.print(f"  {g['url']}")
+
+    if result.google_dorks:
+        console.print("\n[bold]Google Dorks (run manually in browser)[/bold]")
+        for d in result.google_dorks[:5]:
+            console.print(f"  [dim]{d}[/dim]")
+
+    if result.findings:
+        console.print()
+        table = Table(title="OSINT Findings")
+        table.add_column("Severity", style="yellow")
+        table.add_column("Finding")
+        for f in result.findings:
+            sev_color = {"critical": "bold red", "high": "red", "medium": "yellow",
+                         "low": "dim", "info": "dim"}.get(f["severity"], "white")
+            table.add_row(
+                f"[{sev_color}]{f['severity'].upper()}[/{sev_color}]",
+                f["title"]
+            )
+        console.print(table)
+
+
+@cli.command("nuclei-scan")
+@click.argument("target")
+@click.option("--severity", default="medium,high,critical", show_default=True,
+              help="Severity filter")
+@click.option("--tags", default="cve,misconfig,oast,exposure,default-logins", show_default=True,
+              help="Template tags to run")
+@click.option("--templates", "-t", default=None, help="Specific template path or glob")
+@click.option("--verbose", "-v", is_flag=True)
+@click.option(
+    "--confirm", is_flag=True, default=False,
+    help="REQUIRED: Confirm you have written authorization to scan this target.",
+)
+def nuclei_scan(target, severity, tags, templates, verbose, confirm):
+    """Nuclei template-based vulnerability scanner (requires nuclei installed)."""
+    _setup_logging(verbose)
+    console.print(BANNER)
+    _require_confirm(target, confirm)
+
+    from rao.tools.nuclei_plugin import nuclei_plugin
+
+    if not nuclei_plugin.is_available():
+        console.print(
+            "[red]nuclei binary not found.[/red]\n"
+            "Install with: [bold]go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest[/bold]\n"
+            "Or: [bold]sudo apt install nuclei[/bold]"
+        )
+        sys.exit(1)
+
+    console.print(f"Nuclei version: [dim]{nuclei_plugin.get_version()}[/dim]")
+    console.print(f"Target: [bold]{target}[/bold] | Severity: {severity} | Tags: {tags}\n")
+
+    with console.status("[bold blue]Running Nuclei scan...[/bold blue]"):
+        result = nuclei_plugin.run(target, severity=severity, tags=tags, templates=templates)
+
+    if not result.success:
+        console.print(f"[red]Scan failed: {result.error}[/red]")
+        sys.exit(1)
+
+    findings = result.data.get("rao_findings", [])
+    if not findings:
+        console.print("[green]No findings.[/green]")
+        return
+
+    table = Table(title=f"Nuclei Findings — {target} ({len(findings)} total)")
+    table.add_column("Severity", style="yellow")
+    table.add_column("Title", style="cyan")
+    table.add_column("CVEs", style="dim")
+    for f in sorted(findings, key=lambda x: x.severity.value):
+        sev_color = {"critical": "bold red", "high": "red", "medium": "yellow",
+                     "low": "dim", "info": "dim"}.get(f.severity.value, "white")
+        table.add_row(
+            f"[{sev_color}]{f.severity.value.upper()}[/{sev_color}]",
+            f.title.replace("[Nuclei] ", ""),
+            ", ".join(f.cve_ids[:3]) or "—",
+        )
+    console.print(table)
+
+
+@cli.command("jwt-scan")
+@click.argument("token")
+@click.option("--target", "-t", default="", help="Target URL for live alg:none test (optional)")
+@click.option("--verbose", "-v", is_flag=True)
+def jwt_scan(token: str, target: str, verbose: bool) -> None:
+    """Analyze a JWT token for security vulnerabilities.
+
+    Checks: alg:none, weak secret (offline brute-force), expiry, sensitive
+    payload data, and optionally a live alg:none injection test.
+
+    TOKEN can be a raw JWT (eyJ...) or prefixed with 'Bearer '.
+    """
+    _setup_logging(verbose)
+    console.print(BANNER)
+
+    from rao.tools.jwt_analyzer import JWTAnalyzer
+
+    analyzer = JWTAnalyzer(target_url=target)
+    with console.status("[bold blue]Analyzing JWT...[/bold blue]"):
+        result = analyzer.analyze(token)
+
+    if result.error:
+        console.print(f"[red]Error: {result.error}[/red]")
+        return
+
+    # Header / payload summary
+    console.print("\n[bold]JWT Header[/bold]")
+    for k, v in result.header.items():
+        console.print(f"  {k}: [cyan]{v}[/cyan]")
+
+    console.print("\n[bold]JWT Payload[/bold]")
+    for k, v in result.payload.items():
+        color = "red" if k in {"password", "secret", "api_key"} else "white"
+        console.print(f"  [{color}]{k}[/{color}]: {v}")
+
+    if result.expires_at:
+        status = "[red]EXPIRED[/red]" if result.is_expired else f"[green]{result.days_until_expiry}d remaining[/green]"
+        console.print(f"\n  Expires: {result.expires_at} ({status})")
+
+    if result.weak_secret_found:
+        console.print(f"\n[bold red]⚠ CRACKED SECRET: '{result.weak_secret_found}'[/bold red]")
+
+    if result.alg_none_vulnerable:
+        console.print("\n[bold red]⚠ ALG:NONE ATTACK CONFIRMED — server accepts unsigned tokens![/bold red]")
+
+    if not result.findings:
+        console.print("\n[green]No issues found.[/green]")
+        return
+
+    table = Table(title=f"JWT Findings ({len(result.findings)} total)")
+    table.add_column("Severity", style="yellow")
+    table.add_column("Finding", style="cyan")
+    table.add_column("Detail")
+
+    sev_color_map = {
+        "critical": "bold red", "high": "red",
+        "medium": "yellow", "low": "dim", "info": "dim",
+    }
+    for f in result.findings:
+        sev = f["severity"]
+        col = sev_color_map.get(sev, "white")
+        table.add_row(
+            f"[{col}]{sev.upper()}[/{col}]",
+            f["title"],
+            f["detail"][:90],
+        )
+    console.print(table)
+
+
 @cli.group()
 def sessions():
     """Manage saved mission sessions."""
@@ -444,6 +804,68 @@ def _log_authorization(target: str) -> None:
     )
     with open(log_path, "a") as fh:
         fh.write(entry)
+
+
+def _osint_to_findings(osint_findings: list[dict], target: str, mission) -> None:
+    """Convert OSINT finding dicts into Finding objects and append to mission.findings.
+
+    OSINT findings (severity/title/detail dicts from OSINTCollector) were
+    previously only stored in mission.osint.findings — invisible to the Critic.
+    This function makes them first-class pipeline findings.
+    """
+    from rao.core.state import Finding, Severity
+
+    _sev_map = {
+        "critical": Severity.CRITICAL,
+        "high":     Severity.HIGH,
+        "medium":   Severity.MEDIUM,
+        "low":      Severity.LOW,
+        "info":     Severity.INFO,
+    }
+    for f_dict in osint_findings:
+        sev = _sev_map.get(f_dict.get("severity", "info"), Severity.INFO)
+        detail = f_dict.get("detail") or f_dict.get("description", "")
+        mission.findings.append(Finding(
+            title=f_dict["title"],
+            severity=sev,
+            description=detail,
+            evidence=f"OSINT passive finding for {target}",
+            host=target,
+        ))
+
+
+def _run_post_scan_critic(mission, console) -> None:
+    """Second Critic pass for findings discovered after the main OCC pipeline.
+
+    The main pipeline runs Scout → Librarian → Critic early. Web/SSL/OSINT
+    scans then append to mission.findings, but those findings never go through
+    Critic. This function validates only the unvalidated remainder.
+    """
+    already_validated = {id(f) for f in mission.validated_findings}
+    unvalidated = [
+        f for f in mission.findings
+        if id(f) not in already_validated
+    ]
+    if not unvalidated:
+        return
+
+    from rao.agents.critic import CriticAgent
+    from rao.core.state import MissionState
+
+    critic = CriticAgent()
+    # Create a lightweight proxy mission with only the unvalidated findings
+    proxy = MissionState(target=mission.target, scope=mission.scope, findings=unvalidated)
+    with console.status(
+        f"[bold blue]Validating {len(unvalidated)} supplementary findings...[/bold blue]"
+    ):
+        proxy = critic.run(proxy)
+
+    mission.validated_findings.extend(proxy.validated_findings)
+    if proxy.validated_findings:
+        console.print(
+            f"  [green]Post-scan Critic:[/green] "
+            f"{len(proxy.validated_findings)}/{len(unvalidated)} findings validated"
+        )
 
 
 def _web_to_findings(web_result, mission) -> None:

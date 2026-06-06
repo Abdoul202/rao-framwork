@@ -95,10 +95,16 @@ class OperatorAgent:
         try:
             mission.current_phase = "exploitation_planning"
             response = self.llm.invoke(OPERATOR_PROMPT.format(findings=findings_text))
-            mission.attack_plan = response.content
+            raw_plan: str = response.content
+            mission.attack_plan = raw_plan
+
+            # Parse raw text into structured AttackStep objects
+            from rao.core.structured_output import AttackStep
+            mission.attack_steps = AttackStep.parse_llm_response(raw_plan)
             logger.info(
-                "Operator: attack plan generated (%d characters).",
-                len(mission.attack_plan),
+                "Operator: attack plan generated (%d characters, %d steps).",
+                len(raw_plan),
+                len(mission.attack_steps),
             )
         except Exception as e:
             logger.warning("Operator: attack plan generation failed: %s", e)

@@ -51,10 +51,14 @@ def test_crtsh_filters_wildcards():
         mock_get.return_value.json.return_value = mock_response
         mock_get.return_value.raise_for_status = lambda: None
         result = enumerator._query_crtsh("example.com")
+    # _query_crtsh now returns list of (subdomain, source) tuples
+    subdomains = [s for s, _ in result]
+    sources    = [src for _, src in result]
     # Wildcards must be excluded
-    assert not any("*" in s for s in result)
-    assert "www.example.com" in result
-    assert "api.example.com" in result
+    assert not any("*" in s for s in subdomains)
+    assert "www.example.com" in subdomains
+    assert "api.example.com" in subdomains
+    assert all(src == "crt.sh" for src in sources)
 
 
 def test_resolve_timeout_restores_socket_timeout():

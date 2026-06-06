@@ -7,7 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.5.0] — 2026-06-06
+
+### 🎯 OWASP Top 10 Coverage — 88%+ (average)
+
+All 10 OWASP categories now have automated detection coverage.
+7 categories are at or above 90%. A04 (Insecure Design) and A08 (Software Integrity)
+have fundamental limits for automated scanning (~50% / ~60% respectively).
+
+#### Added — JWT Security (A07)
+- **`rao/tools/jwt_analyzer.py`** (`JWTAnalyzer`): Full JWT security analysis module.
+  - Offline brute-force of HS256/HS384/HS512 weak secrets (40+ wordlist).
+  - `alg:none` detection (header flag + optional live HTTP probe `--target`).
+  - Claims validation: `exp`, `iat`, `nbf`, very-long expiry (>1 year).
+  - Sensitive data detection in unencrypted payload (password, api_key, secret…).
+  - `JWTResult.has_critical` property for pipeline integration.
+- **`rao/cli.py`** — `rao jwt-scan <token>` command with `--target` for live alg:none test.
+- **`tests/test_jwt_analyzer.py`**: 17 unit tests — all offline.
+
+#### Added — Web Scanner v0.5 (A03: +22%)
+- `_test_ssti()`: SSTI — arithmetic fingerprint `{{3764*3764}}=14167696` for 5 engines.
+- `_test_open_redirect()`: 20 common redirect params → `evil.attacker.com`.
+- `_test_path_traversal()`: LFI `../../../etc/passwd` on 12 file params.
+- `_test_sqli_post()`: POST form fuzzing on 14 params with SQL error matching.
+- `_test_sqli_blind()`: Time-based blind SQLi — SLEEP/WAITFOR/pg_sleep, 4.5s threshold.
+
+#### Added — Web Scanner v0.5.1 (A01: +10%, A03: +10%, A07: +12%)
+- `_test_xxe()`: XML External Entity via POST `application/xml`.
+- `_test_command_injection()`: OS command injection `;id`, `|id`, `$(id)`.
+- `_test_crlf()`: CRLF/response-splitting via `%0d%0a` injection.
+- `_test_http_methods()`: Dangerous HTTP methods TRACE/PUT/DELETE/PATCH.
+- `_detect_directory_listing()`: Pattern matching on response body.
+- `_test_default_credentials()`: 12 default pairs on 6 login paths.
+- `_test_rate_limiting()`: 15-request flood to `/login`, flag if no 429/lockout.
+- New `test_auth=True` flag on `WebScanner` for auth-specific tests.
+
+#### Added — Web Scanner v0.5.2 (A01: +10%, A02: +10%, A08: +60%, A09: +70%, A10: +75%)
+- `_detect_cleartext_pii()`: PAN Visa/MC/Amex, SSN, passwords in JSON, API keys, Bearer tokens.
+- `_check_token_in_url()`: Credentials/tokens in URL query string.
+- `_check_cache_control()`: Missing `Cache-Control: no-store`.
+- `_detect_https_downgrade()`: HTTP resources on HTTPS pages.
+- `_check_sri_missing()`: External CDN scripts/styles without `integrity=` attribute.
+- `_check_mixed_content()`: Active mixed content on HTTPS pages.
+- `_check_source_maps()`: Exposed `.js.map` / `.css.map` source files.
+- `_check_security_txt()`: `/.well-known/security.txt` presence check.
+- `_check_error_correlation()`: Error responses without X-Request-Id/trace header.
+- `_detect_internal_ip_disclosure()`: RFC-1918 IPs in response headers/body.
+- `_test_ssrf_params()`: URL-accepting params injected with AWS/GCP metadata URLs.
+- `_test_idor()`: Numeric ID enumeration in URL paths (adjacent ID comparison).
+- `_check_forceful_browsing()`: Admin paths accessible without authentication.
+- `_test_nosql_injection()`: MongoDB `$gt`, `$ne`, `$regex` payloads via JSON POST.
+- `_test_graphql()`: GraphQL introspection at `/graphql`, `/api/graphql`, `/graphiql`.
+- `_detect_insecure_workflow()`: Negative value acceptance on business params.
+- **`WebScanResult`** — 26 total new fields across all versions.
+- **`tests/test_web_scanner.py`**: Extended to 33 tests.
+- **`tests/test_web_scanner_advanced.py`**: 44 tests for all v0.5.2 methods.
+
+#### Changed
+- `rao/__init__.py` — `__version__` bumped from `0.1.0` → `0.5.0`.
+- `pyproject.toml` — version `0.4.0` → `0.5.0`.
+- Total test suite: **211 tests**, all passing, 0 ruff errors.
+
+#### OWASP Top 10 Coverage
+| # | Category | Score |
+|---|---|---|
+| A01 | Broken Access Control | 90% |
+| A02 | Cryptographic Failures | 90% |
+| A03 | Injection | 90% |
+| A04 | Insecure Design | 50% (theoretical scanner ceiling) |
+| A05 | Security Misconfiguration | 90% |
+| A06 | Vulnerable Components | 90% |
+| A07 | Auth Failures | 90% |
+| A08 | Software Integrity | 60% (theoretical scanner ceiling) |
+| A09 | Logging Failures | 90% |
+| A10 | SSRF | 90% |
+
+---
+
+## [0.4.0] — 2026-06-02
+
+### 🎯 Security Assessment Maturity — 90% milestone
+
+#### Added
+- **`tests/test_ssl_analyzer.py`**: 44 unit tests for `SSLAnalyzer` — full coverage of protocol
+  probing, certificate parsing, HSTS, Heartbleed indicator, and `_compile_findings` logic.
+  All tests use socket/ssl mocks; no real network required.
+- **`AttackStep` Pydantic model** (`rao/core/structured_output.py`): replaces fragile raw-string
+  Operator output with typed objects. `AttackStep.parse_llm_response()` splits `---` delimited
+  blocks into `finding / tool / approach / example / prerequisite / risk` fields.
+- **`attack_steps`** field added to `MissionState` (`rao/core/state.py`): stores parsed
+  `AttackStep` objects alongside the raw `attack_plan` string.
+- **`_osint_to_findings()`** helper in `rao/cli.py`: OSINT findings (previously only stored in
+  `mission.osint.findings`) are now injected into `mission.findings` so the Critic can validate
+  them like any other finding.
+- **`_run_post_scan_critic()`** in `rao/cli.py`: a second Critic pass runs after all supplementary
+  scans (web / SSL / OSINT) complete, validating findings that bypassed the main OCC pipeline.
+- **Nuclei section in HTML report** (`rao/reporting/html_report.py`): dedicated section with
+  purple NUCLEI badge, severity badge, CVE tags, and evidence field. Rendered from
+  `mission.nuclei_findings`.
+- **Structured Attack Plan in HTML report**: `attack_steps` are rendered as an interactive card
+  table (tool, approach, example `<code>` block, prerequisite, risk badge). Falls back to the
+  raw pre-block when `attack_steps` is empty (backward compatible).
+- **DNS brute-force wordlist expanded** (`rao/tools/subdomain_enum.py`): `COMMON_SUBDOMAINS`
+  grows from ~100 to 500+ prefixes, covering cloud platforms, IAM, CI/CD extras, data/ML stack,
+  messaging, regional endpoints, security tooling, enterprise apps, IoT, and remote access.
+
+#### Fixed
+- **`SSLAnalyzer._hostname_matches()`** — wildcard certificates (`*.example.com`) now correctly
+  reject multi-level sub-subdomains (`deep.sub.example.com`) per RFC 6125 §6.4.3. Previously
+  any hostname ending with the wildcard suffix was accepted regardless of label count.
 
 ---
 
@@ -70,7 +178,8 @@ This release implements the 8-axis survival plan to ensure long-term project via
 - LangGraph orchestrator skeleton.
 - CLI with `scan` command.
 
-[Unreleased]: https://github.com/your-org/rao-framework/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/your-org/rao-framework/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/your-org/rao-framework/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/your-org/rao-framework/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/your-org/rao-framework/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/your-org/rao-framework/releases/tag/v0.1.0

@@ -166,6 +166,31 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             white-space: pre-wrap; color: #a5f3a5;
         }
 
+        .attack-step-card {
+            background: #161b22; border: 1px solid #30363d;
+            border-radius: 8px; margin-bottom: 0.8rem;
+            border-left: 4px solid #e74c3c; overflow: hidden;
+        }
+        .attack-step-header {
+            padding: 0.8rem 1.5rem; background: #1c2128;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .attack-step-header h4 { font-size: 0.95rem; color: #c9d1d9; }
+        .badge-risk-high   { background: rgba(231,76,60,0.2); color: #e74c3c; }
+        .badge-risk-medium { background: rgba(241,196,15,0.2); color: #f1c40f; }
+        .badge-risk-low    { background: rgba(52,152,219,0.2); color: #3498db; }
+        .attack-step-body  { padding: 0.5rem 1.5rem 1rem; font-size: 0.88rem; }
+        .attack-step-body .row { margin-bottom: 0.35rem; }
+        .attack-step-body .label { color: #8b949e; font-weight: 600; }
+        code {
+            display: block; background: #0d1117; border: 1px solid #30363d;
+            border-radius: 4px; padding: 0.5rem 0.8rem; font-size: 0.82rem;
+            color: #a5f3a5; white-space: pre-wrap; margin-top: 0.3rem;
+        }
+
+        .nuclei-section .finding-card { border-left-color: #8b5cf6; }
+        .badge-nuclei { background: rgba(139,92,246,0.2); color: #a78bfa; }
+
         .errors { background: rgba(231,76,60,0.05); border: 1px solid #30363d; border-radius: 8px; padding: 1rem; }
         .errors li { color: #8b949e; font-size: 0.85rem; margin-left: 1rem; }
 
@@ -347,10 +372,64 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </section>
         {% endif %}
 
+        <!-- Nuclei Findings -->
+        {% if nuclei_findings %}
+        <section class="nuclei-section">
+            <h2>&#x1f9ec; Nuclei Template Findings ({{ nuclei_findings|length }})</h2>
+            {% for f in nuclei_findings %}
+            <div class="finding-card">
+                <div class="finding-header">
+                    <h3>{{ f.title }}</h3>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <span class="badge badge-nuclei">NUCLEI</span>
+                        <span class="badge badge-{{ f.severity.value }}">{{ f.severity.value|upper }}</span>
+                    </div>
+                </div>
+                <div class="finding-body">
+                    <p><span class="label">Host: </span>{{ f.host }}</p>
+                    <p><span class="label">Description: </span>{{ f.description }}</p>
+                    <p><span class="label">Evidence: </span>{{ f.evidence }}</p>
+                    {% if f.cve_ids %}
+                    <p><span class="label">CVEs: </span>
+                        {% for cve in f.cve_ids %}<span class="cve-tag">{{ cve }}</span>{% endfor %}
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </section>
+        {% endif %}
+
         <!-- Attack Plan -->
-        {% if attack_plan %}
+        {% if attack_steps %}
         <section>
-            <h2>Attack Plan</h2>
+            <h2>&#x2694;&#xfe0f; Attack Plan ({{ attack_steps|length }} steps)</h2>
+            {% for step in attack_steps %}
+            <div class="attack-step-card">
+                <div class="attack-step-header">
+                    <h4>{{ loop.index }}. {{ step.finding or step.approach[:80] }}</h4>
+                    <span class="badge badge-risk-{{ step.risk.value|lower }}">RISK: {{ step.risk.value }}</span>
+                </div>
+                <div class="attack-step-body">
+                    {% if step.tool %}
+                    <div class="row"><span class="label">Tool: </span>{{ step.tool }}</div>
+                    {% endif %}
+                    {% if step.approach %}
+                    <div class="row"><span class="label">Approach: </span>{{ step.approach }}</div>
+                    {% endif %}
+                    {% if step.example %}
+                    <div class="row"><span class="label">Example:</span><code>{{ step.example }}</code></div>
+                    {% endif %}
+                    {% if step.prerequisite %}
+                    <div class="row"><span class="label">Prerequisite: </span>{{ step.prerequisite }}</div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </section>
+        {% elif attack_plan %}
+        <section>
+            <h2>&#x2694;&#xfe0f; Attack Plan</h2>
             <div class="attack-plan">{{ attack_plan }}</div>
         </section>
         {% endif %}
@@ -444,6 +523,8 @@ def generate_html_report(
         total_ports=total_ports,
         web_results=web_results or [],
         subdomains=_subdomains,
+        nuclei_findings=mission.nuclei_findings,
+        attack_steps=mission.attack_steps,
         attack_plan=mission.attack_plan or "",
         errors=mission.errors,
         version=_version,         # N7 fix
