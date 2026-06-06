@@ -702,6 +702,392 @@ def jwt_scan(token: str, target: str, verbose: bool) -> None:
     console.print(table)
 
 
+# ── rao audit ─────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("target")
+@click.option(
+    "--confirm", is_flag=True, default=False,
+    help="REQUIRED: Confirm written authorization to scan this target.",
+)
+@click.option("--scope", "-s", multiple=True, help="Additional scope entries (IPs, CIDRs, domains).")
+@click.option("--jwt", "jwt_token", default="", help="JWT token to analyze (optional).")
+@click.option("--jwt-target", default="", help="URL for live alg:none JWT test (optional).")
+@click.option("--no-web",        is_flag=True, help="Skip web vulnerability scan.")
+@click.option("--no-inject",     is_flag=True, help="Skip active injection tests (SQLi, XSS, SSTI, SSRF…).")
+@click.option("--no-auth",       is_flag=True, help="Skip authentication tests (default creds, rate limiting).")
+@click.option("--no-ssl",        is_flag=True, help="Skip SSL/TLS analysis.")
+@click.option("--no-osint",      is_flag=True, help="Skip OSINT collection.")
+@click.option("--no-nuclei",     is_flag=True, help="Skip Nuclei scan.")
+@click.option("--no-subdomains", is_flag=True, help="Skip subdomain enumeration.")
+@click.option("--no-cve",        is_flag=True, help="Skip nmap + CVE + LLM pipeline.")
+@click.option(
+    "--nuclei-severity", default="medium,high,critical", show_default=True,
+    help="Nuclei severity filter.",
+)
+@click.option("--html",    is_flag=True, default=True,  help="Generate HTML report (default: on).")
+@click.option("--no-html", is_flag=True, default=False, help="Disable HTML report generation.")
+@click.option("--save",    is_flag=True, help="Save session for later resume.")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output.")
+def audit(
+    target, confirm, scope, jwt_token, jwt_target,
+    no_web, no_inject, no_auth, no_ssl, no_osint, no_nuclei, no_subdomains, no_cve,
+    nuclei_severity, html, no_html, save, verbose,
+):
+    """Full security audit — ALL tests enabled by default.
+
+    Runs every available module in one command:\n
+      • Nmap port scan + CVE lookup + LLM analytics\n
+      • Web scan: headers, cookies, CORS, paths (500+)\n
+      • Active injection tests: SQLi, XSS, SSTI, XXE, CMDi, CRLF, NoSQL, GraphQL\n
+      • SSRF, IDOR, forceful browsing, PII, token-in-URL\n
+      • Auth tests: default credentials (12 pairs), rate limiting\n
+      • SSL/TLS deep analysis\n
+      • OSINT (WHOIS, Shodan, Censys, LeakIX, GreyNoise, URLScan, HaveIBeenPwned)\n
+      • Nuclei (9000+ templates — if installed)\n
+      • Subdomain enumeration (crt.sh + DNS brute-force)\n
+      • JWT analysis (--jwt TOKEN)\n
+      • HTML report auto-generated\n
+
+    Example:\n
+      rao audit https://target.com --confirm\n
+      rao audit https://target.com --confirm --jwt eyJhbGc... --no-nuclei
+    """
+    _setup_logging(verbose)
+    console.print(BANNER)
+    _require_confirm(target, confirm)
+
+    do_html = html and not no_html
+
+    scope_set = set(scope) | {target}
+    scope_list = sorted(scope_set)
+
+    from rao.tools.scope_validator import ScopeValidator
+    validator = ScopeValidator(allowed_targets=scope_list, allow_private=True)
+    try:
+        validator.validate(target)
+    except Exception as e:
+        console.print(f"[red]Scope error: {e}[/red]")
+        sys.exit(1)
+
+    # ── Mission banner ──────────────────────────────────────────────────────
+    modules = []
+    if not no_cve:        modules.append("[green]CVE + LLM[/green]")
+    if not no_web:        modules.append("[green]WebScan (OWASP x10)[/green]")
+    if not no_inject:     modules.append("[yellow]Injections[/yellow]")
+    if not no_auth:       modules.append("[yellow]Auth tests[/yellow]")
+    if not no_ssl:        modules.append("[green]SSL/TLS[/green]")
+    if not no_osint:      modules.append("[green]OSINT[/green]")
+    if not no_nuclei:     modules.append("[green]Nuclei[/green]")
+    if not no_subdomains: modules.append("[green]Subdomains[/green]")
+    if jwt_token:         modules.append("[cyan]JWT[/cyan]")
+
+    console.print(Panel(
+        f"[bold]Target:[/bold] {target}\n"
+        f"[bold]Scope:[/bold]  {', '.join(scope_list)}\n"
+        f"[bold]Modules:[/bold] {' | '.join(modules)}\n"
+        f"[bold]HTML report:[/bold] {'Yes' if do_html else 'No'}",
+        title="[bold red]⚔  RAO AUDIT — Full Security Assessment[/bold red]",
+        border_style="red",
+    ))
+    console.print("\n[yellow]DISCLAIMER: Authorized testing only. Ensure you have explicit written permission.[/yellow]\n")
+
+    # ── Phase 1: Nmap + CVE + LLM ──────────────────────────────────────────
+    from rao.core.orchestrator import OCC
+    from rao.core.state import MissionState
+
+    if not no_cve:
+        console.rule("[bold blue]Phase 1/8 — Nmap · CVE · LLM[/bold blue]")
+        with console.status("[bold blue]Running recon + CVE analysis...[/bold blue]"):
+            occ = OCC()
+            mission = occ.execute(target=target, scope=scope_list)
+        console.print(f"  Hosts: {len(mission.hosts)} | Findings: {len(mission.findings)}")
+    else:
+        console.rule("[dim]Phase 1/8 — Nmap · CVE · LLM (skipped)[/dim]")
+        mission = MissionState(target=target, scope=scope_list)
+
+    web_results = []
+    subdomains = []
+
+    # ── Phase 2: Web scan ──────────────────────────────────────────────────
+    if not no_web:
+        console.rule("[bold blue]Phase 2/8 — Web Scanner (OWASP Top 10)[/bold blue]")
+        from rao.core.state import WebScanInfo
+        from rao.tools.web_scanner import WebScanner
+
+        scanner = WebScanner(
+            test_injections=not no_inject,
+            test_auth=not no_auth,
+        )
+        # Build URL list: from nmap results + target itself
+        urls_to_scan: list[str] = []
+        for host in mission.hosts:
+            for port in host.ports:
+                if port.service in ("http", "https", "http-proxy", "http-alt"):
+                    scheme = "https" if port.port in (443, 8443) or "ssl" in port.service else "http"
+                    urls_to_scan.append(f"{scheme}://{host.ip}:{port.port}")
+        if not urls_to_scan:
+            # Fallback: scan the target directly
+            t = target if target.startswith(("http://", "https://")) else f"https://{target}"
+            urls_to_scan.append(t)
+
+        for url in urls_to_scan:
+            with console.status(f"[bold blue]Scanning {url}...[/bold blue]"):
+                result = scanner.scan(url)
+            if result:
+                web_results.append(result)
+                _web_to_findings(result, mission)
+                mission.web_scans.append(WebScanInfo(
+                    url=result.url,
+                    status_code=result.status_code,
+                    server=result.server,
+                    technologies=result.technologies,
+                    missing_headers_count=len(result.missing_headers),
+                    exposed_paths_count=len(result.exposed_paths),
+                    cors_issues_count=len(result.cors_issues),
+                ))
+                # Surface critical OWASP findings
+                _audit_print_web_findings(result, console)
+    else:
+        console.rule("[dim]Phase 2/8 — Web Scanner (skipped)[/dim]")
+
+    # ── Phase 3: SSL/TLS ───────────────────────────────────────────────────
+    if not no_ssl:
+        console.rule("[bold blue]Phase 3/8 — SSL/TLS Analysis[/bold blue]")
+        from rao.core.state import SSLFinding
+        from rao.tools.ssl_analyzer import SSLAnalyzer
+
+        ssl_analyzer = SSLAnalyzer()
+        # Try target directly if no nmap hosts
+        ssl_targets = [
+            (host.ip, port.port)
+            for host in mission.hosts
+            for port in host.ports
+            if port.port in (443, 8443) or "ssl" in port.service.lower()
+        ]
+        if not ssl_targets and not _is_ip(target):
+            ssl_targets = [(target.replace("https://", "").replace("http://", "").split("/")[0], 443)]
+
+        for ssl_host, ssl_port in ssl_targets:
+            with console.status(f"[bold blue]SSL analysis {ssl_host}:{ssl_port}...[/bold blue]"):
+                ssl_result = ssl_analyzer.analyze(ssl_host, ssl_port)
+            for f in ssl_result.findings:
+                from rao.core.state import Finding, Severity
+                sev_map = {"critical": Severity.CRITICAL, "high": Severity.HIGH,
+                           "medium": Severity.MEDIUM, "low": Severity.LOW}
+                mission.ssl_findings.append(SSLFinding(
+                    host=ssl_host, port=ssl_port,
+                    severity=f["severity"], title=f["title"], detail=f["detail"],
+                ))
+                mission.findings.append(Finding(
+                    title=f["title"], severity=sev_map.get(f["severity"], Severity.INFO),
+                    description=f["detail"],
+                    evidence=f"SSL: {ssl_host}:{ssl_port}",
+                    host=ssl_host, port=ssl_port,
+                ))
+            if ssl_result.findings:
+                console.print(f"  [yellow]SSL:[/yellow] {len(ssl_result.findings)} findings on {ssl_host}:{ssl_port}")
+    else:
+        console.rule("[dim]Phase 3/8 — SSL/TLS (skipped)[/dim]")
+
+    # ── Phase 4: OSINT ─────────────────────────────────────────────────────
+    if not no_osint and not _is_ip(target):
+        console.rule("[bold blue]Phase 4/8 — OSINT Collection[/bold blue]")
+        from rao.core.state import OSINTSummary
+        from rao.tools.osint import OSINTCollector
+
+        domain = target.replace("https://", "").replace("http://", "").split("/")[0]
+        collector = OSINTCollector()
+        with console.status(f"[bold blue]OSINT: {domain}...[/bold blue]"):
+            osint_result = collector.collect(domain)
+        mission.osint = OSINTSummary(
+            target=domain,
+            registrar=osint_result.whois.get("registrar", ""),
+            shodan_ports=osint_result.shodan_info.get("open_ports", []),
+            shodan_vulns=osint_result.shodan_info.get("vulns", []),
+            otx_pulse_count=len(osint_result.otx_pulses),
+            emails_found=len(osint_result.emails),
+            github_leaks=len(osint_result.github_results),
+            google_dorks=osint_result.google_dorks,
+            findings=osint_result.findings,
+        )
+        _osint_to_findings(osint_result.findings, domain, mission)
+        console.print(f"  [green]OSINT:[/green] {len(osint_result.findings)} findings")
+    elif no_osint or _is_ip(target):
+        tag = "skipped" if no_osint else "IP target — skipped"
+        console.rule(f"[dim]Phase 4/8 — OSINT ({tag})[/dim]")
+
+    # ── Phase 5: Nuclei ────────────────────────────────────────────────────
+    if not no_nuclei:
+        console.rule("[bold blue]Phase 5/8 — Nuclei Scan[/bold blue]")
+        from rao.tools.nuclei_plugin import nuclei_plugin
+
+        if not nuclei_plugin.is_available():
+            console.print("  [yellow]Nuclei not installed — skipping.[/yellow]")
+            console.print("  Install: go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest")
+        else:
+            nuclei_targets = [target] + [ws.url for ws in mission.web_scans][:4]
+            for nt in nuclei_targets:
+                with console.status(f"[bold blue]Nuclei: {nt}...[/bold blue]"):
+                    tool_result = nuclei_plugin.run(nt, severity=nuclei_severity)
+                if tool_result.success:
+                    nf = tool_result.data.get("rao_findings", [])
+                    mission.nuclei_findings.extend(nf)
+                    mission.validated_findings.extend(nf)
+                    if nf:
+                        console.print(f"  [red]Nuclei:[/red] {len(nf)} findings on {nt}")
+    else:
+        console.rule("[dim]Phase 5/8 — Nuclei (skipped)[/dim]")
+
+    # ── Phase 6: Subdomains ────────────────────────────────────────────────
+    if not no_subdomains and not _is_ip(target):
+        console.rule("[bold blue]Phase 6/8 — Subdomain Enumeration[/bold blue]")
+        from rao.core.state import SubdomainInfo
+        from rao.tools.subdomain_enum import SubdomainEnumerator
+
+        domain = target.replace("https://", "").replace("http://", "").split("/")[0]
+        enumerator = SubdomainEnumerator()
+        with console.status(f"[bold blue]Enumerating subdomains of {domain}...[/bold blue]"):
+            subdomains = enumerator.enumerate(domain)
+        for s in subdomains:
+            mission.subdomains.append(SubdomainInfo(
+                subdomain=s["subdomain"], ip=s["ip"], source=s.get("source", ""),
+            ))
+        console.print(f"  [green]Subdomains:[/green] {len(subdomains)} found")
+    else:
+        console.rule("[dim]Phase 6/8 — Subdomains (skipped)[/dim]")
+
+    # ── Phase 7: JWT Analysis ──────────────────────────────────────────────
+    if jwt_token:
+        console.rule("[bold blue]Phase 7/8 — JWT Analysis[/bold blue]")
+        try:
+            from rao.tools.jwt_analyzer import JWTAnalyzer
+            analyzer = JWTAnalyzer()
+            jwt_result = analyzer.analyze(jwt_token)
+
+            # Display findings inline
+            jwt_table = Table(title="JWT Security Analysis", border_style="cyan")
+            jwt_table.add_column("Check", style="bold")
+            jwt_table.add_column("Result")
+            jwt_table.add_row("Algorithm", jwt_result.algorithm or "unknown")
+            jwt_table.add_row("alg:none", "[red]YES — CRITICAL[/red]" if jwt_result.alg_none_detected else "[green]No[/green]")
+            jwt_table.add_row("Expired", "[red]YES[/red]" if jwt_result.is_expired else "[green]No[/green]")
+            jwt_table.add_row("Weak secret", f"[red]{jwt_result.weak_secret}[/red]" if jwt_result.weak_secret else "[green]Not found[/green]")
+            jwt_table.add_row("PII in payload", "[red]" + ", ".join(jwt_result.sensitive_payload_keys) + "[/red]" if jwt_result.sensitive_payload_keys else "[green]None[/green]")
+            console.print(jwt_table)
+
+            # Feed JWT findings into mission
+            from rao.core.state import Finding, Severity
+            if jwt_result.alg_none_detected:
+                mission.findings.append(Finding(
+                    title="JWT alg:none — Signature bypass possible",
+                    severity=Severity.CRITICAL,
+                    description="The JWT token uses alg:none, allowing forged tokens without a valid signature.",
+                    evidence=f"Token header declares alg:none",
+                    host=target,
+                ))
+            if jwt_result.weak_secret:
+                mission.findings.append(Finding(
+                    title=f"JWT weak secret found: '{jwt_result.weak_secret}'",
+                    severity=Severity.HIGH,
+                    description="The JWT HMAC secret was found via offline brute-force.",
+                    evidence=f"Secret: {jwt_result.weak_secret}",
+                    host=target,
+                ))
+            if jwt_result.sensitive_payload_keys:
+                mission.findings.append(Finding(
+                    title=f"Sensitive data in JWT payload: {', '.join(jwt_result.sensitive_payload_keys)}",
+                    severity=Severity.MEDIUM,
+                    description="The JWT payload contains sensitive field names (PII/credentials).",
+                    evidence="JWT payload analysis",
+                    host=target,
+                ))
+
+            # Optional live test
+            if jwt_target:
+                with console.status(f"[bold blue]Testing alg:none live on {jwt_target}...[/bold blue]"):
+                    bypassed = analyzer.test_alg_none_live(jwt_token, jwt_target)
+                if bypassed:
+                    console.print(f"  [bold red]⚠  Live alg:none bypass SUCCEEDED on {jwt_target}[/bold red]")
+                else:
+                    console.print(f"  [green]Live alg:none: server rejected forged token[/green]")
+        except Exception as e:
+            console.print(f"  [yellow]JWT analysis error: {e}[/yellow]")
+    else:
+        console.rule("[dim]Phase 7/8 — JWT (no token provided — use --jwt TOKEN)[/dim]")
+
+    # ── Phase 8: Post-scan LLM Critic validation ───────────────────────────
+    console.rule("[bold blue]Phase 8/8 — LLM Critic Validation[/bold blue]")
+    _run_post_scan_critic(mission, console)
+
+    # ── Report ─────────────────────────────────────────────────────────────
+    console.rule("[bold green]Generating Reports[/bold green]")
+    from rao.reporting.report_generator import generate_report
+    generate_report(mission)
+
+    if do_html:
+        from rao.reporting.html_report import generate_html_report
+        path = generate_html_report(mission, web_results, subdomains)
+        console.print(f"\n[bold green]HTML report: {path}[/bold green]")
+
+    if save:
+        from rao.core.session import save_session
+        path = save_session(mission)
+        console.print(f"[green]Session saved: {path}[/green]")
+
+    # ── Final summary ──────────────────────────────────────────────────────
+    ssl_count = len(getattr(mission, "ssl_findings", []))
+    nuclei_count = len(getattr(mission, "nuclei_findings", []))
+    osint_count = len(getattr(mission.osint, "findings", []) if mission.osint else [])
+
+    console.print("\n")
+    console.print(Panel(
+        f"[bold]Hosts:[/bold]          {len(mission.hosts)}\n"
+        f"[bold]CVE findings:[/bold]   {len(mission.findings)}\n"
+        f"[bold]Validated:[/bold]      {len(mission.validated_findings)}\n"
+        f"[bold]Web scans:[/bold]      {len(web_results)}\n"
+        f"[bold]SSL findings:[/bold]   {ssl_count}\n"
+        f"[bold]Nuclei findings:[/bold]{nuclei_count}\n"
+        f"[bold]OSINT findings:[/bold] {osint_count}\n"
+        f"[bold]Subdomains:[/bold]     {len(subdomains)}\n"
+        f"[bold]JWT analysis:[/bold]   {'Yes' if jwt_token else 'No'}\n"
+        f"[bold]Errors:[/bold]         {len(mission.errors)}",
+        title="[bold green]⚔  AUDIT COMPLETE[/bold green]",
+        border_style="green",
+    ))
+
+
+def _audit_print_web_findings(result, console) -> None:
+    """Print important OWASP findings from a WebScanResult inline during audit."""
+    pairs = [
+        (result.sqli_indicators,         "SQLi",         "red"),
+        (result.xss_indicators,          "XSS",          "red"),
+        (result.ssti_indicators,         "SSTI",         "red"),
+        (result.ssrf_indicators,         "SSRF",         "red"),
+        (result.idor_indicators,         "IDOR",         "red"),
+        (result.nosql_indicators,        "NoSQL-inject", "red"),
+        (result.xxe_indicators,          "XXE",          "red"),
+        (result.cmdi_indicators,         "CMDi",         "red"),
+        (result.crlf_indicators,         "CRLF",         "yellow"),
+        (result.open_redirect_indicators,"Open Redirect", "yellow"),
+        (result.cleartext_pii,           "Cleartext PII", "yellow"),
+        (result.token_in_url,            "Token-in-URL", "yellow"),
+        (result.sri_missing,             "SRI missing",  "yellow"),
+        (result.default_creds_found,     "Default creds","red"),
+        (result.cors_issues,             "CORS issue",   "yellow"),
+        (result.forceful_browsing,       "Forced browse","yellow"),
+        (result.exposed_paths,           "Exposed path", "yellow"),
+        (result.waf_detected,            "WAF detected", "dim"),
+    ]
+    for items, label, color in pairs:
+        if items:
+            console.print(f"  [{color}]{label}:[/{color}] {len(items)} finding(s)")
+    if result.rate_limiting_absent:
+        console.print("  [red]Rate limiting:[/red] ABSENT on login endpoint")
+    if not result.security_txt_present:
+        console.print("  [dim]security.txt:[/dim] not present")
+
+
 @cli.group()
 def sessions():
     """Manage saved mission sessions."""
