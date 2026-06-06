@@ -1,4 +1,4 @@
-# API Python — RAO-Framework
+# API Python — RAO-Framework v0.5.0
 
 Le framework peut être utilisé directement depuis du code Python, sans passer par le CLI.
 
@@ -43,7 +43,8 @@ mission.web_scans            # list[WebScanInfo]
 mission.subdomains           # list[SubdomainInfo]
 mission.current_phase        # str — phase finale ("reporting")
 mission.errors               # list[str] — erreurs non-fatales
-mission.attack_plan          # str — plan d'attaque (si Operator a tourné)
+mission.attack_steps         # list[AttackStep] — étapes structurées (Pydantic)
+mission.attack_plan          # str — plan d'attaque (résumé textuel)
 ```
 
 ---
@@ -94,10 +95,19 @@ print(f"Validés: {len(mission.validated_findings)}/{len(mission.findings)}")
 
 ```python
 from rao.agents.operator import OperatorAgent
+from rao.core.structured_output import AttackStep
 
 operator = OperatorAgent()
 mission = operator.run(mission)
 
+# Résultat structuré
+for step in mission.attack_steps:
+    print(f"[{step.risk}] {step.finding}")
+    print(f"  Tool: {step.tool}")
+    print(f"  Approach: {step.approach}")
+    print(f"  Example: {step.example}")
+
+# Résumé textuel
 print(mission.attack_plan)
 ```
 
@@ -111,26 +121,70 @@ from rao.tools.web_scanner import WebScanner
 scanner = WebScanner(
     timeout=10,
     verify_ssl=False,
-    allow_private=True,     # True = autorise les IPs privées (défaut CLI)
-    path_scan_delay=0.05,   # délai entre les probes de paths (s)
+    allow_private=True,
+    path_scan_delay=0.05,
+    test_injections=True,   # Active les tests d'injection (SQLi, XSS, SSTI, SSRF…)
+    test_auth=True,         # Active les tests d'auth (creds par défaut, rate limiting)
 )
 
 result = scanner.scan("http://192.168.1.100:80")
 if result:
-    print(f"Status: {result.status_code}")
-    print(f"Server: {result.server}")
-    print(f"Technologies: {result.technologies}")
-    print(f"Missing headers: {len(result.missing_headers)}")
-    print(f"Exposed paths: {result.exposed_paths}")
-    print(f"CORS issues: {result.cors_issues}")
-    print(f"Cookie issues: {result.cookies_issues}")
+    print(f"Status  : {result.status_code}")
+    print(f"Server  : {result.server}")
+    print(f"Tech    : {result.technologies}")
+    print(f"OWASP A01 — IDOR: {result.idor_indicators}")
+    print(f"OWASP A01 — Forceful browsing: {result.forceful_browsing}")
+    print(f"OWASP A02 — PII: {result.cleartext_pii}")
+    print(f"OWASP A02 — Token in URL: {result.token_in_url}")
+    print(f"OWASP A03 — SQLi: {result.sqli_indicators}")
+    print(f"OWASP A03 — NoSQL: {result.nosql_indicators}")
+    print(f"OWASP A03 — GraphQL: {result.graphql_issues}")
+    print(f"OWASP A07 — Default creds: {result.default_creds_found}")
+    print(f"OWASP A08 — SRI missing: {result.sri_missing}")
+    print(f"OWASP A09 — security.txt: {result.security_txt_present}")
+    print(f"OWASP A10 — SSRF: {result.ssrf_indicators}")
 ```
 
-#### Mode strict SSRF (pour API web)
+---
+
+## JWTAnalyzer
 
 ```python
-scanner = WebScanner(allow_private=False)
-# Lèvera ValueError pour toute IP privée
+from rao.tools.jwt_analyzer import JWTAnalyzer
+
+analyzer = JWTAnalyzer()
+token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIn0.XYZ"
+
+result = analyzer.analyze(token)
+
+print(f"Algorithm : {result.algorithm}")
+print(f"alg:none  : {result.alg_none_detected}")
+print(f"Expired   : {result.is_expired}")
+print(f"Weak secret found : {result.weak_secret}")
+print(f"PII in payload    : {result.sensitive_payload_keys}")
+print(f"Is critical       : {result.has_critical}")
+
+# Test live alg:none (optionnel)
+result_live = analyzer.test_alg_none_live(token, "https://api.example.com/profile")
+print(f"Live bypass succeeded: {result_live}")
+```
+
+---
+
+## SSLAnalyzer
+
+```python
+from rao.tools.ssl_analyzer import SSLAnalyzer
+
+analyzer = SSLAnalyzer()
+result = analyzer.analyze("https://example.com")
+
+print(f"Protocol min : {result.min_protocol}")
+print(f"Cert expire  : {result.cert_expiry}")
+print(f"HSTS         : {result.hsts_present}")
+print(f"Heartbleed   : {result.heartbleed_indicator}")
+print(f"Weak ciphers : {result.weak_ciphers}")
+print(f"Findings     : {result.findings}")
 ```
 
 ---

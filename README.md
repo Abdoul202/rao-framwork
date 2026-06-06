@@ -272,6 +272,21 @@ rao webscan https://target.com --confirm --inject --test-auth
 ```
 
 
+## Roadmap
+
+| Version | Statut | Contenu |
+|---|---|---|
+| v0.1 | ✅ Done | MVP : Scout + Librarian + Critic + OCC pipeline |
+| v0.1.1 | ✅ Done | Web scanner, subdomain enum, CLI, HTML reports, sessions, scope validation |
+| v0.1.2 | ✅ Done | Plugin system (`ToolPlugin`), CVE cache, structured LLM output |
+| v0.4.0 | ✅ Done | SSL Analyzer, OSINT (7 sources), Nuclei plugin, Operator (AttackStep), 90%+ test coverage |
+| **v0.5.0** | ✅ **CURRENT** | JWT Analyzer, 21 méthodes web scanner, OWASP Top 10 coverage 88%+, 213 tests |
+| v0.6.0 | 🛠️ Planned | Exploitation automatisée via Operator, Neo4j attack path visualization |
+| v0.7.0 | 🛠️ Planned | Streamlit dashboard temps réel (mission monitoring) |
+| v1.0.0 | 🛠️ Planned | Full autonomous red team cycle + human-in-the-loop controls |
+
+---
+
 ## Author
 
 **OUEDRAOGO Abdoulaye** - [GitHub](https://github.com/Abdoul202)

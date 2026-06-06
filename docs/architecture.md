@@ -1,4 +1,4 @@
-# Architecture — RAO-Framework
+# Architecture — RAO-Framework v0.5.0
 
 ## Vue d'ensemble
 
@@ -7,8 +7,8 @@ RAO-Framework est un pipeline d'agents orchestrés via **LangGraph**. Chaque age
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLI / Python API                        │
-│              rao scan | rao recon | rao webscan ...             │
-└─────────────────────┬───────────────────────────────────────────┘
+│   rao scan | rao recon | rao webscan | rao ssl | rao jwt-scan   │
+└─────────────────────┤┬─────────────────────────────────────────┘
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -18,18 +18,23 @@ RAO-Framework est un pipeline d'agents orchestrés via **LangGraph**. Chaque age
 │   ┌─────────┐   ┌───────────┐   ┌────────┐   ┌──────────┐     │
 │   │  Scout  │──▶│ Librarian │──▶│ Critic │──▶│ Operator │     │
 │   └─────────┘   └───────────┘   └────────┘   └──────────┘     │
-│        │               │              │             │           │
-│        ▼               ▼              ▼             ▼           │
-│   [HostInfo]     [Finding[]]   [validated_  [attack_plan]      │
-│                               findings[]]                       │
+│        │               │              │          │           │
+│        ▼               ▼              ▼          ▼           │
+│   [HostInfo]     [Finding[]]   [validated_  [AttackStep[]]    │
+│                               findings[]]                     │
 └─────────────────────────────────────────────────────────────────┘
                       │
-          ┌───────────┼──────────────┐
-          ▼           ▼              ▼
-     WebScanner  SubdomainEnum  ReportGenerator
-         │              │             │
-         ▼              ▼             ▼
-    [WebScanResult] [subdomains]  [JSON + HTML]
+          ┌──────────┬──────────────┬─────────┬──────────────────┐
+          ▼           ▼              ▼          ▼                  ▼
+     WebScanner  SubdomainEnum  SSLAnalyzer  JWTAnalyzer     OSINT+Nuclei
+     (21 methods)    (DNS)       (TLS)      (JWT/auth)       (7+9000 srcs)
+          │           │              │          │                  │
+          ▼           ▼              ▼          ▼                  ▼
+  [WebScanResult] [subdomains] [SSLFindings] [JWTResult]  [OSINTResult]
+                              └───────────────┬──────────────────┘
+                                             ▼
+                                     ReportGenerator
+                                   [JSON + HTML]
 ```
 
 ---
@@ -97,7 +102,11 @@ Passe chaque finding au LLM pour distinguer vrais positifs de faux positifs.
 
 **Fichier :** `rao/agents/operator.py`
 
-Génère un plan d'attaque textuel basé sur les findings validés. Résultat stocké dans `mission.attack_plan`.
+Génère un plan d'attaque structuré basé sur les findings validés. Utilise le modèle Pydantic `AttackStep` pour parser la sortie LLM en objets typés.
+
+- Chaque `AttackStep` contient : `finding`, `tool`, `approach`, `example`, `prerequisite`, `risk`
+- `AttackStep.parse_llm_response()` découpe les blocs `---` délimités
+- Résultat stocké dans `mission.attack_steps` (list[AttackStep]) et `mission.attack_plan` (str résumé)
 
 ---
 
@@ -122,9 +131,13 @@ Scout ──┬──(hosts trouvés)──▶ Librarian ──┬──(finding
 | `NmapScanner` | `rao/tools/nmap_wrapper.py` | Wrapper python-nmap |
 | `CVELookup` | `rao/tools/cve_lookup.py` | Requêtes NVD API v2 |
 | `CVECache` | `rao/tools/cve_cache.py` | Cache local SQLite des CVEs |
-| `WebScanner` | `rao/tools/web_scanner.py` | Scan HTTP headers, paths, CORS, cookies |
-| `ScopeValidator` | `rao/tools/scope_validator.py` | Validation des cibles autorisées |
+| `WebScanner` | `rao/tools/web_scanner.py` | 21 méthodes OWASP Top 10 |
+| `JWTAnalyzer` | `rao/tools/jwt_analyzer.py` | Analyse JWT (alg:none, secrets, claims) |
+| `SSLAnalyzer` | `rao/tools/ssl_analyzer.py` | TLS probing, certificats, HSTS |
+| `OSINTCollector` | `rao/tools/osint.py` | 7 sources (Shodan, Censys, WHOIS…) |
+| `NucleiPlugin` | `rao/tools/nuclei_plugin.py` | Wrapper Nuclei 9000+ templates |
 | `SubdomainEnumerator` | `rao/tools/subdomain_enum.py` | crt.sh + brute-force DNS |
+| `ScopeValidator` | `rao/tools/scope_validator.py` | Validation des cibles autorisées |
 | `KnowledgeBase` | `rao/knowledge/chroma_store.py` | Recherche vectorielle ChromaDB |
 | `ToolRegistry` | `rao/tools/plugin.py` | Registre de plugins community |
 
@@ -163,30 +176,35 @@ graph TD
 
 ```
 rao/
-├── __init__.py
-├── cli.py                  # Interface Click (5 commandes)
+├── __init__.py              # __version__ = "0.5.0"
+├── cli.py                  # Interface Click (9 commandes)
 ├── config.py               # Settings Pydantic depuis .env
 ├── agents/
 │   ├── scout.py            # Reconnaissance nmap
 │   ├── librarian.py        # Corrélation CVE + LLM
 │   ├── critic.py           # Validation + FP filtering
-│   └── operator.py         # Attack plan generation
+│   └── operator.py         # Attack plan generation (AttackStep Pydantic)
 ├── core/
-│   ├── state.py            # MissionState, HostInfo, Finding...
+│   ├── state.py            # MissionState, HostInfo, Finding…
 │   ├── orchestrator.py     # OCC LangGraph
 │   ├── llm.py              # Factory LLM (Groq/Ollama)
 │   ├── session.py          # Save/load sessions JSON
-│   └── structured_output.py # Pydantic models pour parsing LLM
+│   └── structured_output.py # AttackStep + parse_llm_response()
 ├── tools/
 │   ├── nmap_wrapper.py
 │   ├── cve_lookup.py
 │   ├── cve_cache.py
-│   ├── web_scanner.py
-│   ├── scope_validator.py
+│   ├── web_scanner.py       # WebScanner (21 méthodes, OWASP Top 10)
+│   ├── jwt_analyzer.py      # JWTAnalyzer (alg:none, secrets, claims, PII)
+│   ├── ssl_analyzer.py      # SSLAnalyzer (TLS probing, certs, HSTS)
+│   ├── osint.py             # OSINTCollector (7 sources)
+│   ├── nuclei_plugin.py     # NucleiPlugin (9000+ templates)
 │   ├── subdomain_enum.py
-│   └── plugin.py           # Protocole ToolPlugin + ToolRegistry
+│   ├── scope_validator.py
+│   └── plugin.py            # Protocole ToolPlugin + ToolRegistry
 ├── knowledge/
-│   └── chroma_store.py     # KnowledgeBase ChromaDB
+│   ├── neo4j_store.py       # Attack graph (optionnel)
+│   └── chroma_store.py      # KnowledgeBase ChromaDB
 └── reporting/
     ├── report_generator.py
     └── html_report.py

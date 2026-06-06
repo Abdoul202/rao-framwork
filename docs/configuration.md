@@ -1,4 +1,4 @@
-# Configuration — RAO-Framework
+# Configuration — RAO-Framework v0.5.0
 
 Toute la configuration passe par des variables d'environnement chargées depuis `.env`.
 
@@ -62,6 +62,31 @@ ChromaDB est une **dépendance optionnelle** (`pip install -e ".[vector]"`). San
 | `NVD_API_KEY` | _(vide)_ | Clé API NVD (National Vulnerability Database) |
 
 Sans clé NVD, les requêtes sont limitées à 5 req/30s. Avec clé (gratuite sur [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key)) : 50 req/30s.
+
+---
+
+### OSINT (optionnel)
+
+Chaque source OSINT fonctionne indépendamment. Sans clé, WHOIS et URLScan fonctionnent quand même.
+
+| Variable | Source | Description |
+|---|---|---|
+| `SHODAN_API_KEY` | Shodan | Port scanning, services exposés |
+| `CENSYS_API_ID` | Censys | Certificate transparency |
+| `CENSYS_API_SECRET` | Censys | Certificate transparency |
+| `LEAKIX_API_KEY` | LeakIX | Services vulnérables indexés |
+| `GREYNOISE_API_KEY` | GreyNoise | Réputation IP (scanners connus) |
+
+> `HIBP_API_KEY` (HaveIBeenPwned) optionnel pour la vérification de fuites email.
+
+---
+
+### Nuclei
+
+| Variable | Défaut | Description |
+|---|---|---|
+| `NUCLEI_TEMPLATES_PATH` | `~/.local/nuclei-templates` | Répertoire des templates Nuclei |
+| `NUCLEI_SEVERITY_FILTER` | `medium,high,critical` | Sévérités à rapporter |
 
 ---
 

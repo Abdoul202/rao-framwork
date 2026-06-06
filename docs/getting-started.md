@@ -1,4 +1,4 @@
-# Getting Started — RAO-Framework
+# Getting Started — RAO-Framework v0.5.0
 
 ## Prérequis
 
@@ -89,21 +89,47 @@ REPORT_OUTPUT_DIR=results
 
 > **Groq est gratuit** : créez une clé sur [console.groq.com](https://console.groq.com)
 
+#### Optionnel : Nuclei (pour `rao nuclei-scan`)
+
+```bash
+# Installer Nuclei (Go requis, ou binaire direct)
+go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+# OU télécharger le binaire depuis https://github.com/projectdiscovery/nuclei/releases
+```
+
+#### Optionnel : clés OSINT (pour `rao osint`)
+
+Dans `.env`, ajouter les clés optionnelles pour activer chaque source :
+
+```env
+SHODAN_API_KEY=votre_cle_shodan
+CENSYS_API_ID=votre_id_censys
+CENSYS_API_SECRET=votre_secret_censys
+LEAKIX_API_KEY=votre_cle_leakix
+GREYNOISE_API_KEY=votre_cle_greynoise
+# Sans clé : WHOIS + URLScan fonctionnent quand même
+```
+
 ---
 
 ## Vérifier l'installation
 
 ```bash
-# Vérifier la version
+# Vérifier la version (doit afficher 0.5.0)
 rao --version
 
-# Afficher l'aide
+# Afficher l'aide générale
 rao --help
 
-# Lister toutes les commandes
+# Lister toutes les commandes disponibles
 rao scan --help
 rao recon --help
 rao webscan --help
+rao jwt-scan --help
+rao ssl --help
+rao osint --help
+rao nuclei-scan --help
+rao subdomains --help
 ```
 
 ---
@@ -127,7 +153,31 @@ rao scan 192.168.1.100 --confirm --html --save
 ### Scan d'un site web uniquement
 
 ```bash
+# Scan passif (headers, paths, CORS, cookies, tech)
 rao webscan https://example.com --confirm
+
+# + Injections actives (SQLi, XSS, SSTI, SSRF, IDOR…)
+rao webscan https://example.com --confirm --inject
+
+# + Test auth (credentials par défaut + rate limiting)
+rao webscan https://example.com --confirm --inject --test-auth
+```
+
+### Analyse JWT
+
+```bash
+# Analyse offline d'un token
+rao jwt-scan eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIn0.XYZ
+
+# + test live alg:none
+rao jwt-scan <token> --target https://api.example.com/profile
+```
+
+### OSINT + Nuclei
+
+```bashao osint example.com
+rao nuclei-scan https://example.com --confirm
+rao ssl https://example.com
 ```
 
 ---

@@ -1,4 +1,4 @@
-# Rapports — RAO-Framework
+# Rapports — RAO-Framework v0.5.0
 
 Les rapports sont générés automatiquement à la fin de chaque scan dans le répertoire `results/`.
 
@@ -46,7 +46,7 @@ Fichier machine-readable pour intégration avec d'autres outils (SIEM, Jira, etc
 {
   "meta": {
     "framework": "RAO-Framework",
-    "version": "0.1.0",
+    "version": "0.5.0",
     "timestamp": "2026-05-25T17:30:37.537055+00:00",
     "target": "192.168.100.189"
   },
@@ -96,16 +96,36 @@ Fichier machine-readable pour intégration avec d'autres outils (SIEM, Jira, etc
       "false_positive": false
     }
   ],
-  "attack_plan": "Phase 1: ...\nPhase 2: ...",
+  "attack_steps": [
+    {
+      "finding": "CVE-2024-XXXX",
+      "tool": "metasploit",
+      "approach": "Exploit Apache RCE via module exploit/multi/http/...",
+      "example": "use exploit/multi/http/... ; set RHOSTS 192.168.100.189",
+      "prerequisite": "Accès réseau au port 80",
+      "risk": "HIGH"
+    }
+  ],
+  "attack_plan": "Phase 1: Exploit Apache RCE...\nPhase 2: Privesc...",
   "web_scans": [
     {
       "url": "http://192.168.100.189:80",
       "status_code": 500,
       "server": "Apache/2.4.67 (Fedora Linux)",
-      "technologies": ["Apache/2.4.67 (Fedora Linux)", "PHP/8.5.6"],
+      "technologies": ["Apache/2.4.67", "PHP/8.5.6"],
       "missing_headers_count": 7,
       "exposed_paths_count": 2,
-      "cors_issues_count": 0
+      "cors_issues_count": 0,
+      "sqli_indicators": [],
+      "xss_indicators": [],
+      "ssti_indicators": [],
+      "ssrf_indicators": [],
+      "idor_indicators": [],
+      "nosql_indicators": [],
+      "cleartext_pii": [],
+      "sri_missing": [],
+      "security_txt_present": false,
+      "rate_limiting_absent": false
     }
   ],
   "subdomains": [],
@@ -152,14 +172,14 @@ chromium results/rao_report_*.html
 
 | Section | Contenu |
 |---|---|
-| **Header** | Target, timestamp, version du framework |
+| **Header** | Target, timestamp, version du framework (v0.5.0) |
 | **Summary** | Compteurs (hôtes, findings par sévérité, web scans) |
 | **Distribution de sévérité** | Graphique visuel des findings |
 | **Hôtes découverts** | Tableau IP, hostname, ports ouverts, services, versions |
 | **Findings** | Tableau complet avec sévérité colorée, CVEs, hôte, port |
-| **Web Scan Results** | Headers manquants, paths exposés, CORS, technologies |
+| **Web Scan Results** | 26 champs OWASP : headers, paths, CORS, cookies, SQLi, XSS, SSTI, SSRF, IDOR, PII, SRI… |
 | **Subdomains** | Tableau sous-domaines (si énumération effectuée) |
-| **Attack Plan** | Plan d'attaque généré par l'Operator (si disponible) |
+| **Attack Plan** | AttackSteps structurés : finding, tool, approach, example, risk |
 
 ---
 
