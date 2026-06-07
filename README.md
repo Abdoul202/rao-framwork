@@ -25,6 +25,11 @@ RAO-Framework automates the offensive security assessment pipeline using coordin
 └──────────────────────────────────────────────────────────────┘
 ```
 
+> **LLM Red Teaming (v0.7 POC)** runs as a **standalone async pipeline** (not part
+> of the OCC graph): it targets an LLM endpoint, proves each finding with
+> deterministic detectors + a conservative judge, and supports continuous
+> baseline/CI gating. See [docs/LLM_REDTEAM.md](docs/LLM_REDTEAM.md).
+
 ### Agents
 
 | Agent | Role | Status |
@@ -40,6 +45,7 @@ RAO-Framework automates the offensive security assessment pipeline using coordin
 | Tool | Function | Status |
 |------|----------|--------|
 | **Web Scanner** | **30 detection methods** — SQLi (GET/POST/Blind), XSS, SSTI, XXE, CMDi, CRLF, SSRF, IDOR, NoSQL, GraphQL, Open Redirect, Path Traversal, Log4Shell, Host Header, LDAP, XPath, Prototype Pollution, HTTP Smuggling, Deserialization, CSRF + passifs | ✅ v0.6 |
+| **LLM Red Team** | Continuous, evidence-based red teaming of LLM endpoints — OWASP LLM Top 10 (2025) + MITRE ATLAS, deterministic detectors + conservative judge (0-FP bias), baseline/CI regression gate, async engine | 🧪 v0.7 POC |
 | **JWT Analyzer** | alg:none attack, weak secret brute-force (HS256/384/512), claims validation, PII in payload | Done |
 | **SSL Analyzer** | TLS protocol probing, certificate parsing, HSTS, cipher suites, Heartbleed indicator | Done |
 | **Nuclei Plugin** | Wrapper around Nuclei with 9000+ templates, result parsing, severity filtering | Done |
@@ -61,6 +67,7 @@ RAO-Framework automates the offensive security assessment pipeline using coordin
 - **LangChain** - LLM abstraction (supports Groq, Ollama)
 - **Click** - Professional CLI interface
 - **Rich** - Terminal UI, tables, progress spinners
+- **httpx** - Async HTTP client (LLM red teaming engine)
 - **Neo4j** - Attack path graph database *(optional)*
 - **ChromaDB** - Vector embeddings for CVE knowledge *(optional — requires python3-devel)*
 - **python-nmap** - Network reconnaissance
@@ -234,7 +241,7 @@ OLLAMA_MODEL=mistral    # ollama pull mistral
 ```
 rao-framework/
 ├── rao/
-│   ├── cli.py                 # Click CLI (audit + 8 commands)
+│   ├── cli.py                 # Click CLI (audit + 11 commands incl. llm-redteam/llm-eval)
 │   ├── config.py              # Pydantic settings from .env
 │   ├── core/
 │   │   ├── orchestrator.py    # OCC - LangGraph pipeline
@@ -260,16 +267,25 @@ rao-framework/
 │   │   ├── osint.py           # OSINT (7 sources)
 │   │   ├── nuclei_plugin.py   # Nuclei wrapper (9000+ templates)
 │   │   ├── subdomain_enum.py  # Subdomain discovery (500+ wordlist)
-│   │   └── scope_validator.py # Target authorization
+│   │   ├── scope_validator.py # Target authorization
+│   │   └── llm_redteam/       # LLM red teaming (async, OWASP LLM Top 10 + ATLAS)
+│   │       ├── target.py      # Async HTTP / OpenAI-compatible adapters
+│   │       ├── probes.py      # Probe catalogue (data/llm_probes.yaml)
+│   │       ├── detectors.py   # Deterministic detectors (0-FP)
+│   │       ├── judge.py       # Conservative LLM judge
+│   │       ├── scanner.py     # Async bounded scanner
+│   │       ├── baseline.py    # Regression diff + CI gate
+│   │       └── eval.py        # FP/FN harness + mock targets
 │   └── reporting/
 │       ├── report_generator.py  # Console + JSON reports (domain-safe filenames)
 │       └── html_report.py       # HTML report with Jinja2 (domain-safe filenames)
-├── tests/                     # 211+ tests
+├── tests/                     # 257 tests (18 files)
 │   ├── test_web_scanner.py
 │   ├── test_web_scanner_advanced.py
 │   ├── test_jwt_analyzer.py
 │   ├── test_ssl_analyzer.py
 │   ├── test_nuclei_plugin.py
+│   ├── test_llm_redteam_*.py  # scanner, detectors, target, judge, baseline, eval
 │   └── ...
 ├── docs/                      # Full documentation
 │   ├── cli-reference.md
@@ -364,57 +380,84 @@ rao webscan https://target.com --confirm --inject --test-auth
 | v0.4.0 | Done | SSL Analyzer, OSINT (7 sources), Nuclei plugin, Operator (AttackStep) |
 | v0.5.0 | Done | JWT Analyzer, 21 web scanner methods, OWASP Top 10 coverage 88%+, `rao audit` command |
 | **v0.6.0** | CURRENT | +8 injection types (Log4Shell, Host Header, LDAP, XPath, Prototype Pollution, HTTP Smuggling, Deserialization, CSRF) · LLM Critic visible per-finding · Operator attack plan displayed · Domain-safe report filenames |
+| **v0.7.0** | 🧪 POC | **Pivot — Continuous LLM Red Teaming** : module `rao llm-redteam` / `rao llm-eval`, OWASP LLM Top 10 (2025) + MITRE ATLAS, détecteurs déterministes + juge conservateur (biais 0-FP), baseline + gate CI, moteur async. Voir [docs/LLM_REDTEAM.md](docs/LLM_REDTEAM.md). |
 
 ---
 
-### Phase A — Valeur immédiate (v0.7)
+### 🎯 Piste principale — Continuous LLM Red Teaming
 
-| Feature | Impact | Effort | Description |
-|---|---|---|---|
-| **Risk Scoring normalisé** | Critique | 1-2j | Score global 0–100 avec grade A→F calculé depuis les findings. Comparaison avec le scan précédent du même domaine (régression / amélioration). |
-| **Mission Memory (SQLite)** | Critique | 1-2j | Mémoire persistante entre scans. `rao audit` affiche automatiquement l'historique du domaine, les nouveaux findings et ceux résolus. Commande `rao history DOMAIN`. |
-| **Rapport PDF exécutif** | Critique | 2-3j | Rapport PDF une page : score global, grade, radar chart OWASP Top 10, top 5 findings critiques, comparaison historique. Généré avec `--pdf`. |
+> Direction produit depuis le pivot v0.7 (cf. audit stratégique). Principe :
+> **prouver** chaque faille (0 faux positif), pas seulement la signaler. C'est la
+> niche défendable où RAO part d'une longueur d'avance (stack IA déjà en place).
 
----
-
-### Phase B — Différenciation forte (v0.8)
-
-| Feature | Impact | Effort | Description |
-|---|---|---|---|
-| **Mode Chat interactif (`rao chat`)** | Critique | 3-4j | Session interactive post-audit avec l'IA : *"Comment exploiter la SQLi ?"*, *"Génère le rapport pour mon client"*, *"Quelles remédiations pour le XSS ?"*. Aucun scanner OSS ne propose ça. |
-| **Dashboard web (`rao serve`)** | Élevé | 4-5j | Interface FastAPI + HTMX sur `localhost:8080`. Lancement de scans via formulaire, logs en temps réel (WebSocket), historique des missions, API REST `/api/scans`. |
+| Version | Objectif | Capacités clés |
+|---|---|---|
+| **v0.7** (POC livré ✅) | Prouver la faisabilité | `rao llm-redteam` / `llm-eval`, OWASP LLM Top 10 (2025) + MITRE ATLAS, détecteurs déterministes + juge conservateur (0-FP), baseline + gate CI, moteur async |
+| **v0.8** | Couverture & preuve | `--known-secret` / `--system-marker` (LLM02/LLM07 déterministes), attaques multi-tours (crescendo), suffixes adverses (GCG), rapport HTML/exécutif, GitHub Action CI |
+| **v0.9** | CTEM continu | scan planifié + diff temporel, alerting de régression (Slack / webhook), test de serveurs MCP, injection multimodale |
+| **v1.0** | Plateforme | multi-cible, dashboard web, registry de probes communautaire, mapping ATLAS complet + éval publique reproductible |
 
 ---
 
-### Phase C — Adoption communautaire (v0.9)
+### 🗄️ Piste legacy — Plateforme d'audit web (dépriorisée post-pivot)
 
-| Feature | Impact | Effort | Description |
-|---|---|---|---|
-| **GitHub Action (`rao-action`)** | Élevé | 2-3j | Action publiée sur le GitHub Marketplace. Lance `rao audit` en CI/CD, uploade le rapport HTML comme artefact, fait échouer la PR si finding CRITICAL. |
-| **Remediation Engine** | Élevé | 3-4j | Pour chaque finding validé → recommandations de correction ciblées (nginx / Apache / Django / Node.js) + références OWASP. Onglet "Plan de remédiation" dans le rapport HTML. |
+> Ces fonctionnalités étaient planifiées **avant** le pivot v0.7. Elles ne sont
+> **plus prioritaires** mais restent conservées ici pour référence / réutilisation
+> éventuelle (le code d'audit web/réseau existant reste pleinement fonctionnel).
 
----
+#### Phase A — Valeur immédiate *(legacy)*
 
-### Phase D — Enrichissement continu (v1.0)
-
-| Feature | Impact | Effort | Description |
-|---|---|---|---|
-| **OSINT 100% gratuit** | Moyen | 2-3j | 8 nouvelles sources sans API key : Wayback Machine (endpoints oubliés), favicon hash fingerprinting, robots.txt/sitemap, Google Dorks exécutés, ASN/BGP info. |
-| **Neo4j Attack Graph visuel** | Moyen | 3-5j | Visualisation interactive du graphe d'attaque (hôtes → services → CVEs → attack paths) dans le dashboard web. |
-| **Scan planifié (`rao schedule`)** | Moyen | 2j | Planifier des audits récurrents (cron-like) avec alertes sur nouveaux findings critiques (email / webhook Slack). |
-| **Plugin marketplace** | Moyen | 4j | Système de plugins communautaires installables via `rao plugin install <nom>`. Registry public sur GitHub. |
+| Feature | Impact | Description |
+|---|---|---|
+| **Risk Scoring normalisé** | Critique | Score global 0–100 avec grade A→F calculé depuis les findings. Comparaison avec le scan précédent du même domaine (régression / amélioration). |
+| **Mission Memory (SQLite)** | Critique | Mémoire persistante entre scans. `rao audit` affiche automatiquement l'historique du domaine, les nouveaux findings et ceux résolus. Commande `rao history DOMAIN`. |
+| **Rapport PDF exécutif** | Critique | Rapport PDF une page : score global, grade, radar chart OWASP Top 10, top 5 findings critiques, comparaison historique. Généré avec `--pdf`. |
 
 ---
 
-### Impact estimé par phase
+#### Phase B — Différenciation forte *(legacy)*
 
-| Phase | Maturité globale | Différenciation OSS | Démontrabilité |
-|---|---|---|---|
-| Actuel (v0.6) | 88% | Moyen | CLI only |
-| Après Phase A (v0.7) | 92% | Élevé | CLI + PDF scoring |
-| Après Phase B (v0.8) | 95% | Très élevé | Web + Chat IA |
-| Après Phase C (v0.9) | 97% | Exceptionnel | CI/CD + Remediation |
-| Après Phase D (v1.0) | 99% | Référence OSS | Plateforme complète |
+| Feature | Impact | Description |
+|---|---|---|
+| **Mode Chat interactif (`rao chat`)** | Critique | Session interactive post-audit avec l'IA : *"Comment exploiter la SQLi ?"*, *"Génère le rapport pour mon client"*, *"Quelles remédiations pour le XSS ?"*. Aucun scanner OSS ne propose ça. |
+| **Dashboard web (`rao serve`)** | Élevé | Interface FastAPI + HTMX sur `localhost:8080`. Lancement de scans via formulaire, logs en temps réel (WebSocket), historique des missions, API REST `/api/scans`. |
+
+---
+
+#### Phase C — Adoption communautaire *(legacy)*
+
+| Feature | Impact | Description |
+|---|---|---|
+| **GitHub Action (`rao-action`)** | Élevé | Action publiée sur le GitHub Marketplace. Lance `rao audit` en CI/CD, uploade le rapport HTML comme artefact, fait échouer la PR si finding CRITICAL. |
+| **Remediation Engine** | Élevé | Pour chaque finding validé → recommandations de correction ciblées (nginx / Apache / Django / Node.js) + références OWASP. Onglet "Plan de remédiation" dans le rapport HTML. |
+
+---
+
+#### Phase D — Enrichissement continu *(legacy)*
+
+| Feature | Impact | Description |
+|---|---|---|
+| **OSINT 100% gratuit** | Moyen | 8 nouvelles sources sans API key : Wayback Machine (endpoints oubliés), favicon hash fingerprinting, robots.txt/sitemap, Google Dorks exécutés, ASN/BGP info. |
+| **Neo4j Attack Graph visuel** | Moyen | Visualisation interactive du graphe d'attaque (hôtes → services → CVEs → attack paths) dans le dashboard web. |
+| **Scan planifié (`rao schedule`)** | Moyen | Planifier des audits récurrents (cron-like) avec alertes sur nouveaux findings critiques (email / webhook Slack). |
+| **Plugin marketplace** | Moyen | Système de plugins communautaires installables via `rao plugin install <nom>`. Registry public sur GitHub. |
+
+---
+
+### Métriques vérifiables (état actuel)
+
+> Remplace les anciens scores de maturité auto-attribués par des chiffres
+> mesurables et reproductibles.
+
+| Métrique | Valeur | Comment la vérifier |
+|---|---|---|
+| Tests | **257** (18 fichiers), 0 échec | `pytest tests/ -q` |
+| Faux positifs (éval LLM red team) | **0** sur cible durcie | `rao llm-eval` |
+| Recall éval (avec juge) | **1.00** sur la suite vérité-terrain | `rao llm-eval --judge` |
+| Couverture OWASP LLM Top 10 | 5/10 — LLM01, 02, 05, 06, 07 *(POC)* | `data/llm_probes.yaml` |
+| Techniques MITRE ATLAS | AML.T0051, T0054, T0057 | `data/llm_probes.yaml` |
+| Commandes CLI | 12 | `rao --help` |
+| Lint | `ruff` clean | `ruff check rao/` |
 
 ---
 
