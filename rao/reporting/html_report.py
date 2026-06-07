@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 # N5 fix: import Environment explicitly to enable autoescape
 from jinja2 import Environment, select_autoescape
@@ -474,8 +476,12 @@ def generate_html_report(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     file_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    safe_target = mission.target.replace(".", "_").replace("/", "_")
-    filepath = output_dir / f"rao_report_{safe_target}_{file_ts}.html"
+
+    # Extraire le domaine proprement (corrige FileNotFoundError sur URLs avec ://)
+    _parsed = urlparse(mission.target if "://" in mission.target else f"http://{mission.target}")
+    _domain = _parsed.hostname or mission.target
+    _safe_domain = re.sub(r"[^a-zA-Z0-9]+", "_", _domain).strip("_")
+    filepath = output_dir / f"rao_report_{_safe_domain}_{file_ts}.html"
 
     # N7 fix: version from importlib.metadata
     try:

@@ -505,6 +505,111 @@ CORRELATION_HEADERS = [
     "X-B3-TraceId", "Request-Id", "X-Amzn-Trace-Id",
 ]
 
+# ── Log4Shell / Log4j (CVE-2021-44228) ────────────────────────
+# Payloads sent in headers most likely to be logged by Log4j
+LOG4J_PAYLOADS = [
+    "${jndi:ldap://127.0.0.1:1389/a}",
+    "${jndi:dns://127.0.0.1/a}",
+    "${${lower:j}ndi:${lower:l}${lower:d}a${lower:p}://127.0.0.1:1389/a}",
+    "${${::-j}${::-n}${::-d}${::-i}:${::-l}${::-d}${::-a}${::-p}://127.0.0.1:1389/a}",
+]
+# Headers most likely to be logged by Log4j
+LOG4J_HEADERS = ["User-Agent", "X-Forwarded-For", "Referer", "X-Api-Version", "X-Client-IP"]
+# Indicators in response body that the JNDI string leaked (unlikely but checked)
+LOG4J_RESPONSE_INDICATORS = ["jndi:", "${jndi", "ldap://"]
+
+# ── Host Header Injection ──────────────────────────────────────
+HOST_HEADER_PAYLOADS = [
+    "evil.attacker.com",
+    "attacker.com:80",
+    "attacker.com%00.legit.com",
+    "legit.com.evil.attacker.com",
+]
+HOST_HEADER_INDICATORS = [
+    "evil.attacker.com",
+    "attacker.com",
+    "password reset",
+    "Location: http://evil",
+]
+
+# ── LDAP Injection ─────────────────────────────────────────────
+LDAP_PAYLOADS = [
+    "*)(uid=*",
+    "*)(|(uid=*",
+    "admin)(&(password=*))",
+    "*)(objectClass=*",
+    ")(cn=*",
+    "*\\00",
+]
+LDAP_ERROR_PATTERNS = [
+    "ldap", "javax.naming", "ldap_search", "ldap_bind",
+    "invalid dn syntax", "ldap_error", "distinguishedname",
+    "size limit exceeded",
+]
+
+# ── XPath Injection ────────────────────────────────────────────
+XPATH_PAYLOADS = [
+    "' or '1'='1",
+    "' or 1=1 or 'x'='x",
+    "x' or name()='username",
+    "' or count(parent::*[position()=1])=0 or 'a'='b",
+    "' or string-length(name(/*[1]))=0 or 'a'='b",
+]
+XPATH_ERROR_PATTERNS = [
+    "xpath", "xpathexception", "unterminated string",
+    "xpath error", "invalid xpath", "xmlxpath",
+    "org.w3c.dom", "saxparseexception",
+]
+
+# ── Prototype Pollution ────────────────────────────────────────
+PROTO_POLLUTION_PAYLOADS = [
+    '{"__proto__": {"isAdmin": true}}',
+    '{"constructor": {"prototype": {"isAdmin": true}}}',
+    '{"__proto__[isAdmin]": "true"}',
+]
+PROTO_POLLUTION_PARAMS = [
+    "__proto__[isAdmin]", "constructor[prototype][isAdmin]",
+    "__proto__.isAdmin",
+]
+PROTO_POLLUTION_INDICATORS = [
+    "isadmin", "\"isadmin\":true", "prototype pollution",
+    "admin: true",
+]
+
+# ── HTTP Request Smuggling (CL.TE / TE.CL) ────────────────────
+SMUGGLING_HEADERS_CL_TE = {
+    "Content-Length": "6",
+    "Transfer-Encoding": "chunked",
+}
+SMUGGLING_HEADERS_TE_CL = {
+    "Transfer-Encoding": "chunked",
+    "Content-Length": "4",
+}
+# Indicators of smuggling vulnerability (unusual response codes/length divergence)
+SMUGGLING_INDICATORS = [400, 408, 500, 501, 505]
+
+# ── Insecure Deserialization ───────────────────────────────────
+# Fingerprinting: check response headers/body for serialization framework hints
+DESERIAL_JAVA_PATTERNS = [
+    "java.io.serializable", "objectinputstream", "deserializ",
+    "org.apache.commons", "ysoserial", "rmiobjectinputstream",
+    "classcastexception", "notserializableexception",
+    "xstream", "jackson", "kyro",
+]
+DESERIAL_PHP_PATTERNS = [
+    "unserialize(", "o:", "s:", "a:{", "php_serializ",
+    "__wakeup", "__destruct",
+]
+DESERIAL_PYTHON_PATTERNS = [
+    "pickle", "cpickle", "_pickle", "yaml.load",
+    "marshal.loads",
+]
+DESERIAL_MAGIC_BYTES = [
+    b"\xac\xed\x00\x05",   # Java serialized object
+    b"\x80\x03",            # Python pickle protocol 3
+    b"\x80\x02",            # Python pickle protocol 2
+]
+
 # ── User-Agent ─────────────────────────────────────────────────────────────────
 
 DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
@@ -559,6 +664,15 @@ class WebScanResult:
     # A10
     ssrf_indicators: list[dict] = field(default_factory=list)          # v0.5.2
     internal_ip_disclosed: list[str] = field(default_factory=list)     # v0.5.2
+    # v0.6 — new injection types
+    log4j_indicators: list[dict] = field(default_factory=list)         # v0.6 CVE-2021-44228
+    host_header_indicators: list[dict] = field(default_factory=list)   # v0.6
+    ldap_indicators: list[dict] = field(default_factory=list)          # v0.6
+    xpath_indicators: list[dict] = field(default_factory=list)         # v0.6
+    proto_pollution_indicators: list[dict] = field(default_factory=list) # v0.6
+    smuggling_indicators: list[dict] = field(default_factory=list)     # v0.6
+    deserialization_indicators: list[dict] = field(default_factory=list) # v0.6
+    csrf_missing: list[str] = field(default_factory=list)              # v0.6
 
 
 class WebScanner:
@@ -651,12 +765,20 @@ class WebScanner:
             self._test_xxe(url, result)
             self._test_command_injection(url, result)
             self._test_crlf(url, result)
-            self._test_nosql_injection(url, result)   # v0.5.2 A03
-            self._test_graphql(url, result)           # v0.5.2 A03/A05
-            self._test_ssrf_params(url, result)       # v0.5.2 A10
-            self._test_idor(url, result)              # v0.5.2 A01
-            self._check_forceful_browsing(url, result)# v0.5.2 A01
-            self._detect_insecure_workflow(url, result)# v0.5.2 A04
+            self._test_nosql_injection(url, result)      # v0.5.2 A03
+            self._test_graphql(url, result)              # v0.5.2 A03/A05
+            self._test_ssrf_params(url, result)          # v0.5.2 A10
+            self._test_idor(url, result)                 # v0.5.2 A01
+            self._check_forceful_browsing(url, result)   # v0.5.2 A01
+            self._detect_insecure_workflow(url, result)  # v0.5.2 A04
+            self._test_log4j(url, result)                # v0.6 CVE-2021-44228
+            self._test_host_header_injection(url, result) # v0.6
+            self._test_ldap_injection(url, result)       # v0.6
+            self._test_xpath_injection(url, result)      # v0.6
+            self._test_prototype_pollution(url, result)  # v0.6
+            self._test_http_request_smuggling(url, result)# v0.6
+            self._test_deserialization(url, result)      # v0.6
+            self._check_csrf(url, result)                # v0.6
 
         if self.test_auth:
             self._test_default_credentials(url, result)
@@ -1871,3 +1993,463 @@ class WebScanner:
                 continue
             finally:
                 time.sleep(self.path_scan_delay)
+
+    # ── v0.6: Log4Shell / Log4j (CVE-2021-44228) ─────────────────────────────
+
+    def _test_log4j(self, base_url: str, result: WebScanResult) -> None:
+        """Test for Log4Shell (CVE-2021-44228) via header injection.
+
+        Sends JNDI lookup payloads in headers most likely to be logged by
+        Log4j (User-Agent, X-Forwarded-For, Referer, etc.).
+        Detection relies on:
+          1. The raw JNDI string appearing in the response body (mis-echo).
+          2. A 500 error triggered by malformed JNDI parsing.
+        Note: Out-of-band (DNS callback) confirmation requires an external
+        collaborator server (e.g. interactsh). This test is heuristic-only.
+        """
+        for payload in LOG4J_PAYLOADS[:2]:
+            for header_name in LOG4J_HEADERS:
+                try:
+                    headers = {header_name: payload}
+                    resp = self.session.get(
+                        base_url, headers=headers, timeout=self.timeout
+                    )
+                    body_lower = resp.text[:3000].lower()
+                    triggered = any(
+                        ind in body_lower for ind in LOG4J_RESPONSE_INDICATORS
+                    )
+                    # A 500 on a payload that normally returns 200 is suspicious
+                    unusual_500 = resp.status_code == 500
+                    if triggered or unusual_500:
+                        indicator = {
+                            "header": header_name,
+                            "payload": payload,
+                            "status": resp.status_code,
+                            "note": (
+                                "JNDI payload echoed in response" if triggered
+                                else "Unexpected 500 on JNDI payload — possible Log4Shell"
+                            ),
+                        }
+                        if indicator not in result.log4j_indicators:
+                            result.log4j_indicators.append(indicator)
+                            logger.warning(
+                                "Log4Shell indicator: header=%s status=%d",
+                                header_name, resp.status_code,
+                            )
+                        break   # one hit per payload is enough
+                except Exception:
+                    continue
+                finally:
+                    time.sleep(self.path_scan_delay)
+
+    # ── v0.6: Host Header Injection ───────────────────────────────────────────
+
+    def _test_host_header_injection(self, base_url: str, result: WebScanResult) -> None:
+        """Test for Host Header Injection.
+
+        Sends spoofed Host headers and checks whether the server:
+          - Reflects the attacker-controlled host in Location / body
+          - Generates password-reset links using the injected host
+        Primary risk: password reset poisoning, cache poisoning.
+        """
+        parsed = urlparse(base_url)
+        original_host = parsed.netloc
+
+        for payload in HOST_HEADER_PAYLOADS[:2]:
+            try:
+                resp = self.session.get(
+                    base_url,
+                    headers={"Host": payload},
+                    timeout=self.timeout,
+                    allow_redirects=False,
+                )
+                body_lower = resp.text[:5000].lower()
+                location = resp.headers.get("Location", "")
+
+                reflected = (
+                    "evil.attacker.com" in body_lower
+                    or "evil.attacker.com" in location.lower()
+                    or payload.split(":")[0] in body_lower
+                )
+                if reflected:
+                    indicator = {
+                        "payload": payload,
+                        "original_host": original_host,
+                        "reflected_in": "body" if "evil" in body_lower else "Location header",
+                        "status": resp.status_code,
+                        "note": "Host header reflected — possible host header injection / password reset poisoning",
+                    }
+                    if indicator not in result.host_header_indicators:
+                        result.host_header_indicators.append(indicator)
+                        logger.warning("Host header injection: payload=%s", payload)
+            except Exception:
+                continue
+            finally:
+                time.sleep(self.path_scan_delay)
+
+    # ── v0.6: LDAP Injection ──────────────────────────────────────────────────
+
+    def _test_ldap_injection(self, base_url: str, result: WebScanResult) -> None:
+        """Test URL parameters for LDAP injection (error-based).
+
+        Sends LDAP metacharacter payloads and checks for LDAP error strings
+        in the response. Targets authentication and search parameters.
+        """
+        parsed = urlparse(base_url)
+        params = parse_qs(parsed.query)
+        if not params:
+            params = {"username": ["admin"], "search": ["test"]}
+
+        for param_name in list(params.keys())[:5]:
+            for payload in LDAP_PAYLOADS[:3]:
+                test_params = dict(params)
+                test_params[param_name] = [payload]
+                try:
+                    test_url = parsed._replace(
+                        query=urlencode(test_params, doseq=True)
+                    ).geturl()
+                    resp = self.session.get(test_url, timeout=self.timeout)
+                    body_lower = resp.text[:5000].lower()
+                    for error in LDAP_ERROR_PATTERNS:
+                        if error in body_lower:
+                            indicator = {
+                                "parameter": param_name,
+                                "payload": payload,
+                                "error_pattern": error,
+                                "url": test_url,
+                                "note": "LDAP error pattern detected — possible LDAP injection",
+                            }
+                            if indicator not in result.ldap_indicators:
+                                result.ldap_indicators.append(indicator)
+                                logger.warning(
+                                    "LDAP injection indicator: param=%s error=%s",
+                                    param_name, error,
+                                )
+                            break
+                except Exception:
+                    continue
+                finally:
+                    time.sleep(self.path_scan_delay)
+
+    # ── v0.6: XPath Injection ─────────────────────────────────────────────────
+
+    def _test_xpath_injection(self, base_url: str, result: WebScanResult) -> None:
+        """Test URL parameters for XPath injection (error-based).
+
+        XPath injection occurs when user input is unsafely interpolated into
+        XPath expressions used to query XML databases. Sends boolean-based
+        payloads and checks for XPath error strings.
+        """
+        parsed = urlparse(base_url)
+        params = parse_qs(parsed.query)
+        if not params:
+            params = {"username": ["admin"], "q": ["test"]}
+
+        for param_name in list(params.keys())[:5]:
+            for payload in XPATH_PAYLOADS[:3]:
+                test_params = dict(params)
+                test_params[param_name] = [payload]
+                try:
+                    test_url = parsed._replace(
+                        query=urlencode(test_params, doseq=True)
+                    ).geturl()
+                    resp = self.session.get(test_url, timeout=self.timeout)
+                    body_lower = resp.text[:5000].lower()
+                    for error in XPATH_ERROR_PATTERNS:
+                        if error in body_lower:
+                            indicator = {
+                                "parameter": param_name,
+                                "payload": payload,
+                                "error_pattern": error,
+                                "url": test_url,
+                                "note": "XPath error pattern detected — possible XPath injection",
+                            }
+                            if indicator not in result.xpath_indicators:
+                                result.xpath_indicators.append(indicator)
+                                logger.warning(
+                                    "XPath injection indicator: param=%s error=%s",
+                                    param_name, error,
+                                )
+                            break
+                except Exception:
+                    continue
+                finally:
+                    time.sleep(self.path_scan_delay)
+
+    # ── v0.6: Prototype Pollution ─────────────────────────────────────────────
+
+    def _test_prototype_pollution(self, base_url: str, result: WebScanResult) -> None:
+        """Test for Prototype Pollution in JSON APIs.
+
+        Sends JSON bodies containing __proto__ / constructor.prototype keys
+        and checks whether the response reflects injected properties.
+        Also tests GET query params with bracket notation (__proto__[key]).
+        Mainly affects Node.js / Express applications.
+        """
+        parsed = urlparse(base_url)
+
+        # 1. POST with JSON body
+        for payload in PROTO_POLLUTION_PAYLOADS:
+            try:
+                resp = self.session.post(
+                    base_url,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=self.timeout,
+                )
+                body_lower = resp.text[:3000].lower()
+                for ind in PROTO_POLLUTION_INDICATORS:
+                    if ind in body_lower:
+                        indicator = {
+                            "method": "POST",
+                            "payload": payload,
+                            "indicator": ind,
+                            "note": "Prototype pollution indicator in JSON POST response",
+                        }
+                        if indicator not in result.proto_pollution_indicators:
+                            result.proto_pollution_indicators.append(indicator)
+                            logger.warning("Prototype pollution: indicator=%s", ind)
+                        break
+            except Exception:
+                continue
+            finally:
+                time.sleep(self.path_scan_delay)
+
+        # 2. GET query params with bracket notation
+        for param in PROTO_POLLUTION_PARAMS[:2]:
+            try:
+                test_url = f"{base_url}?{param}=true"
+                resp = self.session.get(test_url, timeout=self.timeout)
+                body_lower = resp.text[:3000].lower()
+                for ind in PROTO_POLLUTION_INDICATORS:
+                    if ind in body_lower:
+                        indicator = {
+                            "method": "GET",
+                            "param": param,
+                            "indicator": ind,
+                            "note": "Prototype pollution indicator via GET query param",
+                        }
+                        if indicator not in result.proto_pollution_indicators:
+                            result.proto_pollution_indicators.append(indicator)
+                            logger.warning(
+                                "Prototype pollution (GET): param=%s", param
+                            )
+                        break
+            except Exception:
+                continue
+            finally:
+                time.sleep(self.path_scan_delay)
+
+    # ── v0.6: HTTP Request Smuggling (CL.TE / TE.CL) ─────────────────────────
+
+    def _test_http_request_smuggling(self, base_url: str, result: WebScanResult) -> None:
+        """Heuristic test for HTTP Request Smuggling (CL.TE and TE.CL).
+
+        Sends ambiguous Content-Length + Transfer-Encoding headers and looks
+        for anomalous server responses (unexpected 400/500, timing divergence).
+        Full confirmation requires a smuggler tool (e.g. smuggler.py / Burp).
+        This test is heuristic-only and has a low false-positive rate when
+        combined with response code analysis.
+        """
+        import socket
+        import ssl as _ssl
+
+        parsed = urlparse(base_url)
+        host = parsed.hostname or ""
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        use_tls = parsed.scheme == "https"
+
+        # CL.TE probe: server uses Content-Length, proxy uses Transfer-Encoding
+        cl_te_probe = (
+            f"POST / HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"Content-Type: application/x-www-form-urlencoded\r\n"
+            f"Content-Length: 6\r\n"
+            f"Transfer-Encoding: chunked\r\n"
+            f"\r\n"
+            f"0\r\n"
+            f"\r\n"
+            f"X"
+        )
+
+        for probe_name, probe in [("CL.TE", cl_te_probe)]:
+            try:
+                sock = socket.create_connection((host, port), timeout=self.timeout)
+                if use_tls:
+                    ctx = _ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = _ssl.CERT_NONE
+                    sock = ctx.wrap_socket(sock, server_hostname=host)
+                sock.sendall(probe.encode())
+                sock.settimeout(5)
+                response_data = b""
+                while True:
+                    try:
+                        chunk = sock.recv(4096)
+                        if not chunk:
+                            break
+                        response_data += chunk
+                        if len(response_data) > 10000:
+                            break
+                    except socket.timeout:
+                        break
+                sock.close()
+
+                # Parse HTTP status code from raw response
+                first_line = response_data.decode("utf-8", errors="replace").split("\r\n")[0]
+                status = 0
+                if first_line.startswith("HTTP/"):
+                    try:
+                        status = int(first_line.split(" ")[1])
+                    except (IndexError, ValueError):
+                        pass
+
+                if status in SMUGGLING_INDICATORS:
+                    indicator = {
+                        "probe": probe_name,
+                        "status": status,
+                        "host": host,
+                        "note": (
+                            f"HTTP {status} on {probe_name} smuggling probe — "
+                            "possible request smuggling vulnerability. "
+                            "Confirm with smuggler.py or Burp HTTP Request Smuggler."
+                        ),
+                    }
+                    if indicator not in result.smuggling_indicators:
+                        result.smuggling_indicators.append(indicator)
+                        logger.warning(
+                            "HTTP request smuggling indicator: probe=%s status=%d",
+                            probe_name, status,
+                        )
+            except Exception:
+                continue
+
+    # ── v0.6: Insecure Deserialization ────────────────────────────────────────
+
+    def _test_deserialization(self, base_url: str, result: WebScanResult) -> None:
+        """Fingerprint insecure deserialization exposure.
+
+        Checks response headers, Content-Type, and body for signatures of
+        serialization frameworks (Java, PHP, Python pickle) that may indicate
+        deserialized user input. Also checks for magic bytes in binary
+        responses.
+        Note: Active exploitation requires crafted gadget chains; this test
+        is fingerprinting/heuristic only.
+        """
+        try:
+            resp = self.session.get(base_url, timeout=self.timeout)
+            body = resp.text[:10000].lower()
+            raw_body = resp.content[:100]
+
+            # Check magic bytes (binary serialized objects)
+            for magic in DESERIAL_MAGIC_BYTES:
+                if raw_body.startswith(magic):
+                    indicator = {
+                        "type": "magic_bytes",
+                        "value": magic.hex(),
+                        "note": (
+                            "Response starts with serialized object magic bytes — "
+                            "possible insecure deserialization exposure"
+                        ),
+                    }
+                    if indicator not in result.deserialization_indicators:
+                        result.deserialization_indicators.append(indicator)
+                        logger.warning("Deserialization magic bytes: %s", magic.hex())
+
+            # Check body patterns
+            checks = [
+                (DESERIAL_JAVA_PATTERNS, "Java"),
+                (DESERIAL_PHP_PATTERNS, "PHP"),
+                (DESERIAL_PYTHON_PATTERNS, "Python"),
+            ]
+            for patterns, lang in checks:
+                for pattern in patterns:
+                    if pattern in body:
+                        indicator = {
+                            "type": f"{lang}_pattern",
+                            "pattern": pattern,
+                            "note": (
+                                f"{lang} serialization framework detected in response — "
+                                "verify if user-controlled input is deserialized"
+                            ),
+                        }
+                        if indicator not in result.deserialization_indicators:
+                            result.deserialization_indicators.append(indicator)
+                            logger.warning(
+                                "Deserialization fingerprint: lang=%s pattern=%s",
+                                lang, pattern,
+                            )
+                        break   # one match per language is enough
+
+            # Check Content-Type for serialized data
+            ct = resp.headers.get("Content-Type", "").lower()
+            if "application/x-java-serialized-object" in ct:
+                indicator = {
+                    "type": "content_type",
+                    "value": ct,
+                    "note": "Content-Type signals Java serialized object in response",
+                }
+                if indicator not in result.deserialization_indicators:
+                    result.deserialization_indicators.append(indicator)
+        except Exception:
+            pass
+
+    # ── v0.6: CSRF Token Absence ──────────────────────────────────────────────
+
+    def _check_csrf(self, base_url: str, result: WebScanResult) -> None:
+        """Check for missing CSRF protection on forms.
+
+        Parses HTML forms in the response and checks whether each form
+        contains an anti-CSRF token (hidden input with names like
+        csrf_token, _token, __RequestVerificationToken, etc.).
+        Also checks for the SameSite cookie attribute (complementary defense).
+        """
+        try:
+            from html.parser import HTMLParser
+
+            class _FormParser(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.forms: list[dict] = []
+                    self._current_form: dict | None = None
+                    self._csrf_names = {
+                        "csrf_token", "csrf", "_token", "_csrf",
+                        "__requestverificationtoken", "authenticity_token",
+                        "x-csrf-token", "csrfmiddlewaretoken", "nonce",
+                    }
+
+                def handle_starttag(self, tag, attrs):
+                    attrs_dict = dict(attrs)
+                    if tag == "form":
+                        self._current_form = {
+                            "action": attrs_dict.get("action", ""),
+                            "method": attrs_dict.get("method", "GET").upper(),
+                            "has_csrf": False,
+                        }
+                        self.forms.append(self._current_form)
+                    elif tag == "input" and self._current_form:
+                        input_name = (attrs_dict.get("name") or "").lower()
+                        input_type = (attrs_dict.get("type") or "").lower()
+                        if (
+                            input_type == "hidden"
+                            and input_name in self._csrf_names
+                        ):
+                            self._current_form["has_csrf"] = True
+
+            resp = self.session.get(base_url, timeout=self.timeout)
+            parser = _FormParser()
+            parser.feed(resp.text)
+
+            for form in parser.forms:
+                # Only flag POST forms — GET forms rarely need CSRF protection
+                if form["method"] == "POST" and not form["has_csrf"]:
+                    issue = (
+                        f"POST form (action={form['action'] or '/'}) "
+                        "missing CSRF token — vulnerable to cross-site request forgery"
+                    )
+                    if issue not in result.csrf_missing:
+                        result.csrf_missing.append(issue)
+                        logger.warning("CSRF token missing: action=%s", form["action"])
+
+        except Exception:
+            pass

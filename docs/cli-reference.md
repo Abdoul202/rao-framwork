@@ -1,4 +1,4 @@
-# CLI Reference — RAO-Framework v0.5.0
+# CLI Reference — RAO-Framework v0.6.0
 
 ## Vue d'ensemble
 
@@ -10,7 +10,8 @@ Options:
   --help      Afficher l'aide
 
 Commandes:
-  scan        Scan complet (nmap + CVE + web + subdomains + rapport)
+  audit       ⭐ Audit complet ALL-IN-ONE (RECOMMANDÉ)
+  scan        Scan nmap + CVE + LLM
   recon       Reconnaissance rapide (nmap + web scan)
   webscan     Scan web (headers, paths, CORS, cookies, injections)
   ssl         Analyse SSL/TLS approfondie
@@ -20,6 +21,96 @@ Commandes:
   subdomains  Énumération de sous-domaines (passif)
   sessions    Gestion des sessions sauvegardées
 ```
+
+---
+
+## `rao audit` — Audit complet ALL-IN-ONE ⭐ (RECOMMANDÉ)
+
+Lance **tous les modules** en une seule commande orchestrée :
+- Nmap + CVE + LLM (Librarian)
+- Web scan (30 types d'injection actifs par défaut)
+- SSL/TLS analysis
+- OSINT (7 sources)
+- Nuclei (si installé)
+- Subdomain enumeration (500+ prefixes)
+- LLM Critic validation **visible** (per-finding)
+- LLM Operator attack plan **affiché** dans le terminal
+- Rapports JSON + HTML
+
+```bash
+rao audit TARGET [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Description |
+|---|---|
+| `TARGET` | URL (`https://example.com`), IP, ou domaine |
+
+### Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--confirm` | off | **REQUIS** — confirme l'autorisation écrite |
+| `--scope, -s` | — | Scope supplémentaire (IP, CIDR, domaine). Répétable. |
+| `--jwt TOKEN` | — | Token JWT à analyser (phase 7) |
+| `--jwt-target URL` | — | URL pour le test live alg:none |
+| `--no-web` | off | Ignorer le web scan |
+| `--no-inject` | off | Ignorer les injections actives |
+| `--no-auth` | off | Ignorer les tests d'authentification |
+| `--no-ssl` | off | Ignorer l'analyse SSL |
+| `--no-osint` | off | Ignorer l'OSINT |
+| `--no-nuclei` | off | Ignorer Nuclei |
+| `--no-subdomains` | off | Ignorer l'énumération |
+| `--no-cve` | off | Ignorer nmap + CVE + LLM (Phase 1) |
+| `--nuclei-severity` | `medium,high,critical` | Filtre de sévérité Nuclei |
+| `--html` | on | Générer un rapport HTML |
+| `--no-html` | off | Désactiver le rapport HTML |
+| `--save` | off | Sauvegarder la session |
+| `--verbose, -v` | off | Mode verbeux |
+
+### Exemples
+
+```bash
+# Audit complet standard
+rao audit https://example.com --confirm
+
+# Avec rapport HTML + sauvegarde session
+rao audit https://example.com --confirm --html --save
+
+# Audit web uniquement (sans nmap/CVE)
+rao audit https://example.com --confirm --no-cve --html
+
+# Audit rapide (sans Nuclei ni subdomains)
+rao audit https://example.com --confirm --no-nuclei --no-subdomains --html
+
+# Audit passif uniquement (aucun payload actif)
+rao audit https://example.com --confirm --no-inject --no-auth
+
+# Avec analyse JWT
+rao audit https://example.com --confirm --jwt eyJhbGc...
+```
+
+### Phases exécutées
+
+```
+1.  Scope Validator    → Vérifie l'autorisation de la cible
+2.  Scout (nmap)       → Découverte hôtes, ports, services
+3.  Librarian (LLM)   → Corrélation CVE + analyse LLM
+4.  Web Scanner        → 30 types de détection (actifs + passifs)
+5.  SSL Analyzer       → Protocoles, certificat, ciphers
+6.  OSINT              → 7 sources (Shodan, Censys, WHOIS…)
+7.  Nuclei             → 9000+ templates (si installé)
+8.  Subdomain Enum     → crt.sh + DNS brute-force
+9.  JWT Analyzer       → Si --jwt TOKEN
+10. Critic (LLM) ✨    → Validation visible par finding (✅/❌)
+11. Operator (LLM) ✨  → Plan d'attaque affiché (table Rich)
+12. Reports            → JSON + HTML (nom basé sur le domaine)
+13. Session Save       → Si --save
+```
+
+> **Filenames des rapports**: basés sur le domaine extrait de l'URL.
+> `https://example.com/` → `results/rao_report_example_com_20260607_120000.json`
 
 ---
 
@@ -140,28 +231,57 @@ rao webscan TARGET [OPTIONS]
 | `--confirm` | **REQUIS** |
 | `--verbose, -v` | Mode verbeux |
 
-### Ce qui est vérifié
+### Ce qui est vérifié (passif — toujours actif)
 
 | Catégorie | Détails |
 |---|---|
-| **Security Headers** | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-XSS-Protection |
+| **Security Headers** | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy |
 | **Technologies** | Détection via headers et body (WordPress, PHP, Django, React, Next.js…) |
-| **Paths sensibles** | `/.env`, `/.git/HEAD`, `/admin`, `/phpinfo.php`, `/swagger.json`, `/graphql`… |
+| **Paths sensibles** | 500+ paths : `/.env`, `/.git/HEAD`, `/admin`, `/phpinfo.php`, `/graphql`… |
 | **CORS** | Reflection d'origine arbitraire, wildcard avec credentials |
 | **Cookies** | Flags Secure, HttpOnly, SameSite |
-| **Info leaks** | Stack traces, SQL errors, debug mode dans le body |
+| **Info leaks** | Stack traces, SQL errors, debug mode |
+| **Source maps** | `.js.map`, `.css.map` exposés |
+| **SRI missing** | Scripts CDN sans `integrity=` |
+| **Token in URL** | JWT/session dans query string |
+
+### Injections actives (`--inject`) — 22 types
+
+| # | Type | Méthode |
+|---|---|---|
+| 1 | SQLi GET (error-based) | `_test_sqli` |
+| 2 | SQLi POST | `_test_sqli_post` |
+| 3 | SQLi Blind (time-based) | `_test_sqli_blind` |
+| 4 | XSS Reflected | `_test_xss` |
+| 5 | SSTI (5 engines) | `_test_ssti` |
+| 6 | XXE | `_test_xxe` |
+| 7 | Command Injection | `_test_command_injection` |
+| 8 | CRLF | `_test_crlf` |
+| 9 | NoSQL Injection | `_test_nosql_injection` |
+| 10 | GraphQL Introspection | `_test_graphql` |
+| 11 | SSRF | `_test_ssrf_params` |
+| 12 | IDOR | `_test_idor` |
+| 13 | Path Traversal / LFI | `_test_path_traversal` |
+| 14 | Open Redirect | `_test_open_redirect` |
+| 15 | **Log4Shell** (CVE-2021-44228) | `_test_log4j` |
+| 16 | **Host Header Injection** | `_test_host_header_injection` |
+| 17 | **LDAP Injection** | `_test_ldap_injection` |
+| 18 | **XPath Injection** | `_test_xpath_injection` |
+| 19 | **Prototype Pollution** | `_test_prototype_pollution` |
+| 20 | **HTTP Request Smuggling** | `_test_http_request_smuggling` |
+| 21 | **Insecure Deserialization** | `_test_deserialization` |
+| 22 | **CSRF Token Absence** | `_check_csrf` |
 
 ### Exemples
 
 ```bash
+# Passif uniquement
 rao webscan https://target.local --confirm
-rao webscan 192.168.1.100 --confirm
-rao webscan http://api.example.com:8080 --confirm
 
-# + Injections actives (SQLi, XSS, SSTI, XXE, CMDi, CRLF, NoSQL, SSRF, IDOR…)
+# + 22 injections actives
 rao webscan https://target.local --confirm --inject
 
-# + Test d'authentification (credentials par défaut + rate limiting)
+# + tests d'authentification
 rao webscan https://target.local --confirm --inject --test-auth
 ```
 

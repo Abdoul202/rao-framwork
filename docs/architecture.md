@@ -1,4 +1,4 @@
-# Architecture — RAO-Framework v0.5.0
+# Architecture — RAO-Framework v0.6.0
 
 ## Vue d'ensemble
 
@@ -131,7 +131,7 @@ Scout ──┬──(hosts trouvés)──▶ Librarian ──┬──(finding
 | `NmapScanner` | `rao/tools/nmap_wrapper.py` | Wrapper python-nmap |
 | `CVELookup` | `rao/tools/cve_lookup.py` | Requêtes NVD API v2 |
 | `CVECache` | `rao/tools/cve_cache.py` | Cache local SQLite des CVEs |
-| `WebScanner` | `rao/tools/web_scanner.py` | 21 méthodes OWASP Top 10 |
+| `WebScanner` | `rao/tools/web_scanner.py` | **30 méthodes** OWASP Top 10 (v0.6) |
 | `JWTAnalyzer` | `rao/tools/jwt_analyzer.py` | Analyse JWT (alg:none, secrets, claims) |
 | `SSLAnalyzer` | `rao/tools/ssl_analyzer.py` | TLS probing, certificats, HSTS |
 | `OSINTCollector` | `rao/tools/osint.py` | 7 sources (Shodan, Censys, WHOIS…) |
@@ -176,7 +176,7 @@ graph TD
 
 ```
 rao/
-├── __init__.py              # __version__ = "0.5.0"
+├── __init__.py              # __version__ = "0.6.0"
 ├── cli.py                  # Interface Click (9 commandes)
 ├── config.py               # Settings Pydantic depuis .env
 ├── agents/
@@ -194,7 +194,7 @@ rao/
 │   ├── nmap_wrapper.py
 │   ├── cve_lookup.py
 │   ├── cve_cache.py
-│   ├── web_scanner.py       # WebScanner (21 méthodes, OWASP Top 10)
+│   ├── web_scanner.py       # WebScanner (30 méthodes, OWASP Top 10)
 │   ├── jwt_analyzer.py      # JWTAnalyzer (alg:none, secrets, claims, PII)
 │   ├── ssl_analyzer.py      # SSLAnalyzer (TLS probing, certs, HSTS)
 │   ├── osint.py             # OSINTCollector (7 sources)
@@ -206,6 +206,20 @@ rao/
 │   ├── neo4j_store.py       # Attack graph (optionnel)
 │   └── chroma_store.py      # KnowledgeBase ChromaDB
 └── reporting/
-    ├── report_generator.py
+    ├── report_generator.py  # domain-safe filenames + RiskScorer (v0.7)
     └── html_report.py
+
+# Composants planifiés (v0.7 → v1.0)
+rao/
+├── core/
+│   └── memory.py            # MissionMemory SQLite (v0.7)
+├── reporting/
+│   ├── risk_scorer.py       # Score 0-100 + grade A→F (v0.7)
+│   └── pdf_report.py        # Rapport PDF exécutif (v0.7)
+├── agents/
+│   ├── analyst.py           # rao chat — agent conversationnel (v0.8)
+│   └── remediation.py       # RemediationAgent (v0.9)
+└── server/                  # Dashboard web FastAPI+HTMX (v0.8)
+    ├── app.py
+    └── templates/
 ```

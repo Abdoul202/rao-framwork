@@ -1031,19 +1031,29 @@ def audit(
     else:
         console.rule("[dim]Phase 7/8 — JWT (no token provided — use --jwt TOKEN)[/dim]")
 
-    # ── Phase 8: Post-scan LLM Critic validation ───────────────────────────
+    # ── Phase 8: Post-scan LLM Critic validation ───────────────────────
     console.rule("[bold blue]Phase 8/8 — LLM Critic Validation[/bold blue]")
     _run_post_scan_critic(mission, console)
+
+    # ── Phase 8b: Operator — LLM Attack Plan ────────────────────────
+    _run_operator_and_display(mission, console)
 
     # ── Report ─────────────────────────────────────────────────────────────
     console.rule("[bold green]Generating Reports[/bold green]")
     from rao.reporting.report_generator import generate_report
-    generate_report(mission)
+    try:
+        json_path = generate_report(mission)
+        console.print(f"[green]JSON report: {json_path}[/green]")
+    except Exception as _exc:
+        console.print(f"[yellow]⚠ JSON report failed: {_exc}[/yellow]")
 
     if do_html:
         from rao.reporting.html_report import generate_html_report
-        path = generate_html_report(mission, web_results, subdomains)
-        console.print(f"\n[bold green]HTML report: {path}[/bold green]")
+        try:
+            path = generate_html_report(mission, web_results, subdomains)
+            console.print(f"[bold green]HTML report: {path}[/bold green]")
+        except Exception as _exc:
+            console.print(f"[red]✗ HTML report failed: {_exc}[/red]")
 
     if save:
         from rao.core.session import save_session
@@ -1054,6 +1064,7 @@ def audit(
     ssl_count = len(getattr(mission, "ssl_findings", []))
     nuclei_count = len(getattr(mission, "nuclei_findings", []))
     osint_count = len(getattr(mission.osint, "findings", []) if mission.osint else [])
+    attack_steps_count = len(getattr(mission, "attack_steps", []))
 
     console.print("\n")
     console.print(Panel(
@@ -1066,6 +1077,7 @@ def audit(
         f"[bold]OSINT findings:[/bold] {osint_count}\n"
         f"[bold]Subdomains:[/bold]     {len(subdomains)}\n"
         f"[bold]JWT analysis:[/bold]   {'Yes' if jwt_token else 'No'}\n"
+        f"[bold]Attack steps:[/bold]   {attack_steps_count} (LLM-generated)\n"
         f"[bold]Errors:[/bold]         {len(mission.errors)}",
         title="[bold green]⚔  AUDIT COMPLETE[/bold green]",
         border_style="green",
@@ -1240,33 +1252,139 @@ def _run_post_scan_critic(mission, console) -> None:
 
     The main pipeline runs Scout → Librarian → Critic early. Web/SSL/OSINT
     scans then append to mission.findings, but those findings never go through
-    Critic. This function validates only the unvalidated remainder.
+    Critic. This function validates only the unvalidated remainder and prints
+    live LLM feedback for each finding.
     """
+    from rao.core.llm import get_llm_or_none
+    from rao.core.state import Severity
+
     already_validated = {id(f) for f in mission.validated_findings}
     unvalidated = [
         f for f in mission.findings
         if id(f) not in already_validated
     ]
     if not unvalidated:
+        console.print("  [dim]No new findings to validate.[/dim]")
         return
 
+    # Check LLM availability upfront and display status
+    llm = get_llm_or_none()
+    if llm is None:
+        console.print("  [yellow]⚠ LLM non disponible — mode offline (CRITICAL/HIGH conservés sans validation).[/yellow]")
+    else:
+        console.print(f"  [bold cyan]🧠 LLM actif: {type(llm).__name__}[/bold cyan]")
+        console.print(f"  [dim]Analyse de {len(unvalidated)} finding(s) en cours...[/dim]\n")
+
     from rao.agents.critic import CriticAgent
-    from rao.core.state import MissionState
+    from rao.core.structured_output import CriticVerdict, Exploitability, Verdict
 
     critic = CriticAgent()
-    # Create a lightweight proxy mission with only the unvalidated findings
-    proxy = MissionState(target=mission.target, scope=mission.scope, findings=unvalidated)
-    with console.status(
-        f"[bold blue]Validating {len(unvalidated)} supplementary findings...[/bold blue]"
-    ):
-        proxy = critic.run(proxy)
+    validated_count = 0
+    fp_count = 0
 
-    mission.validated_findings.extend(proxy.validated_findings)
-    if proxy.validated_findings:
+    sev_color = {
+        Severity.CRITICAL: "bold red",
+        Severity.HIGH:     "red",
+        Severity.MEDIUM:   "yellow",
+        Severity.LOW:      "cyan",
+        Severity.INFO:     "dim",
+    }
+
+    for finding in unvalidated:
+        color = sev_color.get(finding.severity, "white")
+        with console.status(
+            f"  [bold blue]Critic LLM → [{color}]{finding.severity.value.upper()}[/{color}] {finding.title[:60]}...[/bold blue]"
+        ):
+            is_valid = critic._validate_finding(finding)
+
+        verdict_icon = "✅" if is_valid else "❌"
+        verdict_label = "VALIDÉ" if is_valid else "FAUX POSITIF"
+        verdict_color = "green" if is_valid else "dim"
         console.print(
-            f"  [green]Post-scan Critic:[/green] "
-            f"{len(proxy.validated_findings)}/{len(unvalidated)} findings validated"
+            f"  {verdict_icon} [{verdict_color}]{verdict_label}[/{verdict_color}] "
+            f"[{color}][{finding.severity.value.upper()}][/{color}] "
+            f"{finding.title[:65]}"
         )
+
+        if is_valid:
+            mission.validated_findings.append(finding)
+            validated_count += 1
+        else:
+            fp_count += 1
+
+    console.print()
+    console.print(Panel(
+        f"[green]Validés:[/green]      {validated_count}/{len(unvalidated)}\n"
+        f"[dim]Faux positifs:[/dim] {fp_count}/{len(unvalidated)}\n"
+        f"[bold]Total validés:[/bold] {len(mission.validated_findings)}",
+        title="[bold cyan]🧠 Critic LLM — Résultat[/bold cyan]",
+        border_style="cyan",
+    ))
+
+
+def _run_operator_and_display(mission, console) -> None:
+    """Run OperatorAgent and display the LLM attack plan in the console."""
+    from rao.core.state import Severity
+
+    critical_findings = [
+        f for f in mission.validated_findings
+        if f.severity in (Severity.CRITICAL, Severity.HIGH)
+    ]
+
+    if not critical_findings:
+        console.print("  [dim]Operator: aucun finding HIGH/CRITICAL validé — plan d'attaque ignoré.[/dim]")
+        return
+
+    console.rule("[bold red]⚔ Operator — Plan d'attaque LLM[/bold red]")
+    console.print(
+        f"  [bold cyan]🧠 Génération du plan d'attaque pour "
+        f"{len(critical_findings)} finding(s) HIGH/CRITICAL...[/bold cyan]\n"
+    )
+
+    from rao.agents.operator import OperatorAgent
+    operator = OperatorAgent()
+
+    with console.status("[bold red]Operator LLM — planification en cours...[/bold red]"):
+        mission = operator.run(mission)
+
+    if mission.attack_steps:
+        # Display structured steps
+        from rich.table import Table
+        table = Table(
+            title=f"⚔ Plan d'attaque — {len(mission.attack_steps)} étape(s)",
+            border_style="red",
+            show_lines=True,
+        )
+        table.add_column("#",       width=3,  style="dim")
+        table.add_column("Severity", width=10)
+        table.add_column("Finding",  width=35)
+        table.add_column("Tool",     width=12, style="cyan")
+        table.add_column("Approach", width=40)
+        table.add_column("Risk",     width=8)
+
+        risk_color = {"HIGH": "bold red", "MEDIUM": "yellow", "LOW": "green"}
+        for i, step in enumerate(mission.attack_steps, 1):
+            risk_val = getattr(step.risk, 'value', str(step.risk)).upper()
+            rc = risk_color.get(risk_val, "white")
+            table.add_row(
+                str(i),
+                f"[red]{step.finding[:10]}[/red]" if step.finding else "—",
+                step.finding[:35] if step.finding else step.approach[:35],
+                step.tool[:12] if step.tool else "—",
+                step.approach[:40] if step.approach else "—",
+                f"[{rc}]{risk_val}[/{rc}]",
+            )
+        console.print(table)
+
+    elif mission.attack_plan:
+        # Fallback: raw plan
+        console.print(Panel(
+            mission.attack_plan[:2000] + ("..." if len(mission.attack_plan) > 2000 else ""),
+            title="[bold red]⚔ Plan d'attaque LLM (brut)[/bold red]",
+            border_style="red",
+        ))
+    else:
+        console.print("  [yellow]Operator: plan non généré (LLM indisponible ou erreur).[/yellow]")
 
 
 def _web_to_findings(web_result, mission) -> None:

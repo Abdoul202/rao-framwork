@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from rich.console import Console
 from rich.table import Table
@@ -80,7 +82,14 @@ def _save_json_report(mission: MissionState) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"rao_report_{mission.target.replace('.', '_')}_{timestamp}.json"
+
+    # Extraire le domaine/host depuis la cible (URL ou IP)
+    _parsed = urlparse(mission.target if "://" in mission.target else f"http://{mission.target}")
+    _domain = _parsed.hostname or mission.target
+
+    # Nom de fichier sûr basé sur le domaine
+    _safe_domain = re.sub(r"[^a-zA-Z0-9]+", "_", _domain).strip("_")
+    filename = f"rao_report_{_safe_domain}_{timestamp}.json"
     filepath = output_dir / filename
 
     # N1 fix: version from importlib.metadata, not hardcoded
@@ -96,6 +105,7 @@ def _save_json_report(mission: MissionState) -> Path:
             "version": _version,           # N1 fix
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "target": mission.target,
+            "domain": _domain,
         },
         "summary": {
             "hosts_discovered": len(mission.hosts),

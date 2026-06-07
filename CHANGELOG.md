@@ -5,6 +5,107 @@ All notable changes to RAO-Framework will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Planifié
+
+### Phase A — v0.7.0 (Valeur immédiate)
+
+#### Prévu — Risk Scoring normalisé
+- **`rao/reporting/risk_scorer.py`** : Score global 0–100 avec grade A→F basé sur les findings validés. Pondération OWASP (CRITICAL=10, HIGH=7, MEDIUM=4, LOW=1). Comparaison automatique avec le scan précédent du même domaine (delta régression/amélioration).
+- **`rao/reporting/pdf_report.py`** : Rapport PDF exécutif : score, grade, radar chart OWASP Top 10, top 5 findings, historique. Option `--pdf` dans `rao audit`.
+
+#### Prévu — Mission Memory
+- **`rao/core/memory.py`** : `MissionMemory` SQLite persistant entre sessions. Stocke : domaine, date, score, findings count. Commande `rao history DOMAIN` → tableau chronologique des scans.
+
+### Phase B — v0.8.0 (Différenciation forte)
+
+#### Prévu — `rao chat` (Mode interactif LLM)
+- **`rao/agents/analyst.py`** : Agent conversationnel post-audit. Charge une session existante et répond aux questions sur les findings : exploitation, remédiation, rapport client.
+- Commande : `rao chat --session opshero_me_20260607`
+
+#### Prévu — Dashboard web (`rao serve`)
+- **`rao/server/`** : Interface FastAPI + HTMX sur `localhost:8080`. Lancement de scans via formulaire, logs en temps réel (WebSocket), API REST `/api/scans`, historique des missions.
+
+### Phase C — v0.9.0 (Adoption communautaire)
+
+#### Prévu — GitHub Action (`rao-action`)
+- **`action.yml`** : Action GitHub Marketplace. Lance `rao audit` en CI/CD, uploade le rapport HTML comme artefact, fait échouer la PR si finding CRITICAL. Option `fail_on_severity`.
+
+#### Prévu — Remediation Engine
+- **`rao/agents/remediation.py`** : Pour chaque finding validé → recommandations de correction nginx/Apache/Django/Node.js + références OWASP. Onglet "Remediation Plan" dans le rapport HTML.
+- **`rao/data/remediation_kb.json`** : Base de connaissances locale 300+ entrées (pas de LLM requis pour les cas courants).
+
+### Phase D — v1.0.0 (Plateforme complète)
+
+#### Prévu
+- **OSINT 100% gratuit** : Wayback Machine, favicon hash, robots.txt, Google Dorks exécutés, ASN/BGP — 8 nouvelles sources sans API key.
+- **Neo4j Attack Graph visuel** : Visualisation interactive dans le dashboard web (hôtes → services → CVEs → attack paths).
+- **`rao schedule`** : Scans récurrents (cron) avec alertes email/Slack sur nouveaux findings critiques.
+- **Plugin marketplace** : `rao plugin install <nom>` — registry communautaire public sur GitHub.
+
+---
+
+## [0.6.0] — 2026-06-07
+
+### 🧠 LLM Visibility + 30 Injection Types
+
+#### Added — 8 new injection/attack detection methods (`rao/tools/web_scanner.py`)
+
+| # | Type | Method | OWASP |
+|---|------|--------|-------|
+| 1 | **Log4Shell** (CVE-2021-44228) | `_test_log4j` | A06 |
+| 2 | **Host Header Injection** | `_test_host_header_injection` | A10 |
+| 3 | **LDAP Injection** (error-based) | `_test_ldap_injection` | A03 |
+| 4 | **XPath Injection** (error-based) | `_test_xpath_injection` | A03 |
+| 5 | **Prototype Pollution** (JSON POST + GET bracket) | `_test_prototype_pollution` | A08 |
+| 6 | **HTTP Request Smuggling** (CL.TE raw socket probe) | `_test_http_request_smuggling` | A08 |
+| 7 | **Insecure Deserialization** (magic bytes + patterns) | `_test_deserialization` | A08 |
+| 8 | **CSRF Token Absence** (POST form HTML parsing) | `_check_csrf` | A01 |
+
+- **Total injection types: 30** (22 active + 8 passive).
+- New payload constants: `LOG4J_PAYLOADS`, `HOST_HEADER_PAYLOADS`, `LDAP_PAYLOADS`, `XPATH_PAYLOADS`, `PROTO_POLLUTION_PAYLOADS`, `DESERIAL_MAGIC_BYTES`, etc.
+- New `WebScanResult` fields: `log4j_indicators`, `host_header_indicators`, `ldap_indicators`, `xpath_indicators`, `proto_pollution_indicators`, `smuggling_indicators`, `deserialization_indicators`, `csrf_missing`.
+
+#### Added — LLM activity visible in terminal (`rao/cli.py`)
+
+- **`_run_post_scan_critic()`** rewritten: each finding now shows a spinner during LLM analysis, then a per-finding verdict line:
+  - `✅ VALIDÉ   [HIGH]   Missing header: X-Frame-Options`
+  - `❌ FAUX POSITIF [LOW] Missing header: X-XSS-Protection`
+- LLM provider name displayed on startup: `🧠 LLM actif: ChatGroq`.
+- Summary panel after Critic pass: `Validés / Faux positifs / Total validés`.
+- **`_run_operator_and_display()`** new function: runs `OperatorAgent` after Phase 8 and displays the attack plan as a Rich table (Finding / Tool / Approach / Risk) instead of hiding it in logs.
+- Final summary panel now includes `Attack steps: N (LLM-generated)`.
+
+#### Fixed — `FileNotFoundError` on URL targets (`rao/reporting/`)
+
+- **`report_generator.py`**: `mission.target.replace('.', '_')` was not sanitizing `:` or `/` from URLs (e.g. `https://opshero.me/` → `results/https:/opshero_me/...` → crash). Now uses `urlparse` + `re.sub` to extract clean hostname: `opshero_me`.
+- **`html_report.py`**: Same bug fixed with same approach. Both JSON and HTML reports now use domain-based filenames: `rao_report_opshero_me_20260607_120000.{json,html}`.
+- **`report_generator.py`**: Added `"domain"` field to JSON report `meta` section (extracted hostname for easy identification).
+
+#### Fixed — Silent report failures (`rao/cli.py`)
+
+- `generate_report()` and `generate_html_report()` calls now wrapped in `try/except` — any error shows a visible warning (`⚠ JSON report failed: ...` / `✗ HTML report failed: ...`) instead of crashing silently.
+- JSON report path now printed to console on success.
+
+#### Changed
+
+- `rao/__init__.py` — `__version__` bumped `0.5.0` → `0.6.0`.
+- `pyproject.toml` — version `0.5.0` → `0.6.0`.
+
+#### OWASP Top 10 Coverage (v0.6)
+
+| # | Category | Score |
+|---|---|---|
+| A01 | Broken Access Control | 90% |
+| A02 | Cryptographic Failures | 90% |
+| A03 | Injection | **95%** |
+| A04 | Insecure Design | 50% |
+| A05 | Security Misconfiguration | 90% |
+| A06 | Vulnerable Components | 90% |
+| A07 | Auth Failures | 90% |
+| A08 | Software Integrity | **65%** |
+| A09 | Logging Failures | 90% |
+| A10 | SSRF | 90% |
+
 ---
 
 ## [0.5.0] — 2026-06-06
