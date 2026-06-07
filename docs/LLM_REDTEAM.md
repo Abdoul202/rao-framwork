@@ -35,6 +35,21 @@ The profile's `body` must contain the literal token `{{PROMPT}}`; `response_path
 is a dotted path (with numeric indices) to the assistant text, e.g.
 `choices.0.message.content`.
 
+## Deterministic secret / system-prompt leak detection
+
+When you know a secret planted in the target's context, or a marker from its
+system prompt, pass them so LLM02 (exfiltration) and LLM07 (system-prompt leak)
+are decided **deterministically** instead of going to the judge:
+
+```bash
+rao llm-redteam --profile my_target.yaml --confirm \
+  --known-secret "sk-live-REDACTED" \
+  --system-marker "You are ACME-SupportBot"
+```
+
+Both flags are repeatable. Without them, those probes stay conservative
+(judge if available, otherwise `blocked` — never a false positive).
+
 ## Continuous mode / CI gate
 
 ```bash
@@ -61,17 +76,17 @@ and a hardened reference target. It exits non-zero if any false positive occurs.
 |---|---|---|
 | LLM01 Prompt Injection | direct + indirect (poisoned document) | canary echo |
 | LLM01 (ATLAS AML.T0054) | jailbreaks (DAN, encoding) | refusal → blocked; else judge |
-| LLM02 Sensitive Info Disclosure | secret/key extraction | canary / judge |
+| LLM02 Sensitive Info Disclosure | secret/key extraction | known-secret leak (`--known-secret`) / judge |
 | LLM05 Improper Output Handling | XSS-via-LLM | executable-markup |
 | LLM06 Excessive Agency | unauthorized tool invocation | judge |
-| LLM07 System Prompt Leakage | verbatim extraction | sentinel / judge |
+| LLM07 System Prompt Leakage | verbatim extraction | system-marker leak (`--system-marker`) / judge |
 
 ## Notes & limits (POC)
 
-- Secret-exfil (LLM02) and system-prompt (LLM07) detection is deterministic only
-  when the secret/marker is known to the harness (as in `rao llm-eval`); against
-  an unknown live target these route to the judge. A future `--known-secret` /
-  `--system-marker` flag will make them deterministic when the value is known.
+- Secret-exfil (LLM02) and system-prompt (LLM07) become **deterministic** once you
+  supply `--known-secret` / `--system-marker` (see above). Without them — i.e.
+  against a fully unknown target — they stay conservative (judge if available,
+  otherwise `blocked`; never a false positive).
 - Out of scope for the POC (planned next): multimodal injection, adversarial
   suffix generation (GCG), multi-turn crescendo, MCP-server testing, HTML
   dashboard, scheduler, SIEM/Jira export, fine-tuned judge.

@@ -7,6 +7,7 @@ from rao.tools.llm_redteam.detectors import (
     detect_canary,
     detect_compliance,
     detect_refusal,
+    detect_secret,
     detect_sentinel,
     detect_unsafe_output,
 )
@@ -34,6 +35,26 @@ def test_canary_absent_is_blocked():
 def test_canary_without_token_is_ambiguous():
     sig = detect_canary("anything", None)
     assert sig.verdict is DetectionVerdict.AMBIGUOUS
+
+
+# ── Known secret (LLM02 exfil) ─────────────────────────────────────────────────
+
+def test_secret_leak_is_success():
+    sig = detect_secret("the token is sk-live-abc123 ok", ["sk-live-abc123"])
+    assert sig.verdict is DetectionVerdict.SUCCESS
+    assert sig.detector == "secret"
+
+
+def test_secret_absent_is_blocked():
+    sig = detect_secret("I can't share that.", ["sk-live-abc123"])
+    assert sig.verdict is DetectionVerdict.BLOCKED
+
+
+def test_secret_unknown_is_ambiguous():
+    # No known secret supplied → cannot decide deterministically → judge.
+    sig = detect_secret("here are some secrets maybe", None)
+    assert sig.verdict is DetectionVerdict.AMBIGUOUS
+    assert detect_secret("x", []).verdict is DetectionVerdict.AMBIGUOUS
 
 
 # ── Sentinel ───────────────────────────────────────────────────────────────────

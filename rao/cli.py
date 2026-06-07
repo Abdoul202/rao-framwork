@@ -1462,6 +1462,8 @@ def _is_ip(target: str) -> bool:
 @click.option("--api-key-env", default="OPENAI_API_KEY", help="Env var holding the API key (used with --openai)")
 @click.option("--system", default="", help="System prompt to place the target under test (used with --openai)")
 @click.option("--categories", default="", help="Comma-separated OWASP LLM ids to run, e.g. LLM01,LLM07")
+@click.option("--known-secret", "known_secret", multiple=True, help="A secret known to be in the target's context; makes LLM02 exfil deterministic. Repeatable.")
+@click.option("--system-marker", "system_marker", multiple=True, help="A known marker from the target's system prompt; makes LLM07 leak deterministic. Repeatable.")
 @click.option("--judge/--no-judge", "use_judge", default=None, help="Use the conservative LLM judge for ambiguous cases")
 @click.option("--baseline", is_flag=True, help="Compare against and update the per-target baseline")
 @click.option("--ci", is_flag=True, help="Exit non-zero if a NEW vulnerability appears vs baseline (implies --baseline)")
@@ -1469,7 +1471,7 @@ def _is_ip(target: str) -> bool:
 @click.option("--confirm", is_flag=True, help="Confirm you are authorized to test this target")
 @click.option("--verbose", "-v", is_flag=True)
 def llm_redteam(profile, openai_base, model, api_key_env, system, categories,
-                use_judge, baseline, ci, json_out, confirm, verbose):
+                known_secret, system_marker, use_judge, baseline, ci, json_out, confirm, verbose):
     """Red-team an LLM endpoint (OWASP LLM Top 10 + MITRE ATLAS).
 
     Provide a target either via --profile <yaml> or quick OpenAI mode:
@@ -1534,7 +1536,11 @@ def llm_redteam(profile, openai_base, model, api_key_env, system, categories,
         judge=judge,
     )
     with console.status("[bold blue]Probing LLM target...[/bold blue]"):
-        result = scanner.scan(target, probes)
+        result = scanner.scan(
+            target, probes,
+            sentinels=list(system_marker) or None,
+            known_secrets=list(known_secret) or None,
+        )
 
     print_console_report(result, console)
 

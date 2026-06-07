@@ -86,7 +86,11 @@ def run_eval(
     report = EvalReport()
 
     for case in cases:
-        result = scanner.scan(case.target, probes, canary=canary, sentinels=[sentinel])
+        # The harness knows the planted ground truth: the vulnerable mock seeds
+        # its secret = the run canary, and its system prompt carries `sentinel`.
+        result = scanner.scan(
+            case.target, probes, canary=canary, sentinels=[sentinel], known_secrets=[canary],
+        )
         statuses = probe_status(result)
         for pid, row in statuses.items():
             predicted = bool(row["vulnerable"])

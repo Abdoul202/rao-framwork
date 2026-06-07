@@ -466,6 +466,8 @@ rao llm-redteam --profile target.yaml --baseline --ci --confirm
 | `--api-key-env VAR` | `OPENAI_API_KEY` | Variable d'env contenant la clé API (avec `--openai`) |
 | `--system TEXT` | — | System prompt sous lequel placer la cible (avec `--openai`) |
 | `--categories LIST` | — | Filtre OWASP, ex. `LLM01,LLM07` |
+| `--known-secret TEXT` | — | Secret connu présent dans le contexte de la cible → rend LLM02 (exfil) **déterministe**. Répétable. |
+| `--system-marker TEXT` | — | Marqueur connu du system prompt de la cible → rend LLM07 (fuite) **déterministe**. Répétable. |
 | `--judge / --no-judge` | config | Juge LLM conservateur pour les cas ambigus |
 | `--baseline` | off | Compare et met à jour la baseline de la cible |
 | `--ci` | off | Sort en code ≠ 0 si une faille `NEW` apparaît (implique `--baseline`) |

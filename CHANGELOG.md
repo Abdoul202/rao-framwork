@@ -22,6 +22,10 @@ Nouveau module offensif IA : `rao/tools/llm_redteam/` — red teaming continu et
   (biais 0 faux positif) uniquement sur les cas ambigus.
 - **Couche « continue »** : baseline par cible + diff `NEW`/`FIXED`/`PERSISTENT`
   (`--baseline`), gate CI `--ci` (échec si nouvelle vulnérabilité).
+- **Détection déterministe LLM02/LLM07** : `--known-secret` (exfil de secret) et
+  `--system-marker` (fuite de system prompt) rendent ces probes déterministes
+  quand le secret/marqueur est connu, au lieu de dépendre du juge. Nouveau
+  détecteur `secret` (AMBIGUOUS → juge si inconnu, jamais de faux positif).
 - **`rao llm-eval`** : harness d'évaluation mesurant FP/FN contre des cibles à
   vérité-terrain (mocks vulnérable/durci). Critère : **FP = 0**.
 - `rao/tools/llm_redteam/` : `models.py`, `target.py` (adaptateurs async

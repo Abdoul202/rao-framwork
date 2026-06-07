@@ -21,6 +21,7 @@ from rao.tools.llm_redteam.detectors import (
     DetectionVerdict,
     detect_canary,
     detect_compliance,
+    detect_secret,
     detect_sentinel,
     detect_unsafe_output,
 )
@@ -74,6 +75,7 @@ class LLMRedTeamScanner:
         *,
         canary: str = "",
         sentinels: list[str] | None = None,
+        known_secrets: list[str] | None = None,
     ) -> LLMRedTeamResult:
         canary = canary or new_canary()
         result = LLMRedTeamResult(target_id=target.target_id, target_label=target.label)
@@ -91,7 +93,8 @@ class LLMRedTeamScanner:
             async def worker(probe: LLMProbe, payload: str) -> LLMFinding:
                 async with sem:
                     return await self._run_unit(
-                        probe, payload, target, client, canary, sentinels, judge_used
+                        probe, payload, target, client, canary, sentinels,
+                        known_secrets, judge_used,
                     )
 
             findings = await asyncio.gather(
@@ -112,6 +115,7 @@ class LLMRedTeamScanner:
         client: httpx.AsyncClient,
         canary: str,
         sentinels: list[str] | None,
+        known_secrets: list[str] | None,
         judge_used: dict,
     ) -> LLMFinding:
         finding = LLMFinding(
@@ -133,7 +137,7 @@ class LLMRedTeamScanner:
 
         finding.response_excerpt = response
 
-        signal = self._deterministic(probe, response, canary, sentinels)
+        signal = self._deterministic(probe, response, canary, sentinels, known_secrets)
         if signal.verdict is DetectionVerdict.SUCCESS:
             finding.success = True
             finding.confidence = signal.confidence
@@ -165,9 +169,11 @@ class LLMRedTeamScanner:
         return finding
 
     @staticmethod
-    def _deterministic(probe: LLMProbe, response: str, canary: str, sentinels):
+    def _deterministic(probe: LLMProbe, response: str, canary: str, sentinels, known_secrets=None):
         if probe.detector is DetectorType.CANARY:
             return detect_canary(response, canary)
+        if probe.detector is DetectorType.SECRET:
+            return detect_secret(response, known_secrets)
         if probe.detector is DetectorType.SENTINEL:
             return detect_sentinel(response, sentinels)
         if probe.detector is DetectorType.UNSAFE_OUTPUT:
@@ -187,10 +193,13 @@ class LLMRedTeamScanner:
         *,
         canary: str = "",
         sentinels: list[str] | None = None,
+        known_secrets: list[str] | None = None,
     ) -> LLMRedTeamResult:
         """Synchronous entry point used by the CLI."""
         probes = probes if probes is not None else load_probes()
-        return asyncio.run(self.scan_async(target, probes, canary=canary, sentinels=sentinels))
+        return asyncio.run(self.scan_async(
+            target, probes, canary=canary, sentinels=sentinels, known_secrets=known_secrets,
+        ))
 
     def run(self, target, **kwargs) -> ToolResult:
         """ToolPlugin adapter. `target` may be an LLMTarget or a profile dict."""
@@ -203,6 +212,7 @@ class LLMRedTeamScanner:
                 probes,
                 canary=kwargs.get("canary", ""),
                 sentinels=kwargs.get("sentinels"),
+                known_secrets=kwargs.get("known_secrets"),
             )
             return ToolResult(
                 success=True,
