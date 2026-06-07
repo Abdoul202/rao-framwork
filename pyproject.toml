@@ -11,8 +11,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-    { name = "RAO-Framework Contributors" }
+    { name = "OUEDRAOGO Abdoulaye" },
 ]
+maintainers = [
+    { name = "OUEDRAOGO Abdoulaye" },
+]
+# Contributors: Claude (Anthropic) — Continuous LLM Red Teaming module (v0.7)
 keywords = ["security", "red-team", "penetration-testing", "ai", "agents"]
 
 # N23 fix: install_requires now declared — pip install rao-framework

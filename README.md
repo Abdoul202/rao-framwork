@@ -465,6 +465,11 @@ rao webscan https://target.com --confirm --inject --test-auth
 
 **OUEDRAOGO Abdoulaye** - [GitHub](https://github.com/Abdoul202)
 
+## Contributors
+
+- **OUEDRAOGO Abdoulaye** — créateur & mainteneur
+- **Claude (Anthropic)** — module *Continuous LLM Red Teaming* (v0.7), audit stratégique & documentation
+
 ## License
 
-MIT
+Released under the [MIT License](LICENSE) — Copyright (c) 2026 OUEDRAOGO Abdoulaye and contributors.
