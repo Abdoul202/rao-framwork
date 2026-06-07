@@ -8,6 +8,7 @@
 |---|---|
 | [getting-started.md](getting-started.md) | Installation, configuration, premier scan |
 | [cli-reference.md](cli-reference.md) | Référence complète de toutes les commandes CLI |
+| [LLM_REDTEAM.md](LLM_REDTEAM.md) | Red teaming LLM continu (OWASP LLM Top 10 + MITRE ATLAS) |
 | [architecture.md](architecture.md) | Architecture du pipeline, agents, graphe LangGraph |
 | [configuration.md](configuration.md) | Variables d'environnement, providers LLM, Neo4j |
 | [api-reference.md](api-reference.md) | API Python — usage programmatique |
@@ -36,6 +37,7 @@ OSINT           Nuclei
 |---|---|---|
 | Web Scanner (21 méthodes) | `rao webscan` | Recon + OWASP |
 | JWT Analyzer | `rao jwt-scan` | Auth (A07) |
+| LLM Red Team (async, continu) | `rao llm-redteam` / `rao llm-eval` | OWASP LLM Top 10 + ATLAS |
 | SSL Analyzer | `rao ssl` | Crypto (A02) |
 | OSINT 7 sources | `rao osint` | Recon |
 | Nuclei 9000+ templates | `rao nuclei-scan` | CVE |
@@ -52,8 +54,8 @@ OSINT           Nuclei
 | v0.1.1 | ✅ | Web scanner, subdomains, CLI, HTML reports, sessions |
 | v0.1.2 | ✅ | Plugin system, CVE cache, structured LLM output (AttackStep) |
 | v0.4.0 | ✅ | SSL Analyzer, OSINT, Nuclei, 90% test coverage |
-| **v0.5.0** | ✅ **CURRENT** | JWT Analyzer, 21 méthodes web, OWASP Top 10 coverage 88%+ |
-| v0.6.0 | 🛠️ Planned | Operator agent : exploitation automatisée, Neo4j attack paths |
-| v0.7.0 | 🛠️ Planned | Streamlit dashboard temps réel |
+| v0.5.0 | ✅ | JWT Analyzer, 21 méthodes web, OWASP Top 10 coverage 88%+ |
+| **v0.6.0** | ✅ **CURRENT** | +8 injections, Critic LLM visible, Operator attack plan, `rao audit` |
+| v0.7.0 | 🛠️ POC | **Pivot : Continuous LLM Red Teaming** (`rao llm-redteam` / `llm-eval`) — OWASP LLM Top 10 + ATLAS, moteur async, gate CI, FP=0 |
 | v1.0.0 | 🛠️ Planned | Full autonomous red team cycle + human-in-the-loop |
 

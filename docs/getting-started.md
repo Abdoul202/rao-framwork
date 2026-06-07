@@ -126,6 +126,8 @@ rao scan --help
 rao recon --help
 rao webscan --help
 rao jwt-scan --help
+rao llm-redteam --help
+rao llm-eval --help
 rao ssl --help
 rao osint --help
 rao nuclei-scan --help
@@ -175,10 +177,30 @@ rao jwt-scan <token> --target https://api.example.com/profile
 
 ### OSINT + Nuclei
 
-```bashao osint example.com
+```bash
+rao osint example.com
 rao nuclei-scan https://example.com --confirm
 rao ssl https://example.com
 ```
+
+### Red teaming d'un LLM (continu)
+
+```bash
+# Cible OpenAI-compatible (OpenAI, Groq, vLLM, Ollama /v1, LM Studio…)
+rao llm-redteam --openai http://localhost:8000/v1 --model my-model --judge --confirm --json
+
+# Cible HTTP générique via profil YAML
+rao llm-redteam --profile target.yaml --confirm
+
+# Gate CI : échoue si une NOUVELLE faille apparaît vs baseline
+rao llm-redteam --profile target.yaml --baseline --ci --confirm
+
+# Prouver la qualité du scanner (matrice de confusion, FP = 0)
+rao llm-eval
+```
+
+> Voir [LLM_REDTEAM.md](LLM_REDTEAM.md) pour les profils de cible, la couverture
+> OWASP LLM Top 10 et le mode continu.
 
 ---
 

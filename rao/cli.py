@@ -998,7 +998,7 @@ def audit(
                     title="JWT alg:none — Signature bypass possible",
                     severity=Severity.CRITICAL,
                     description="The JWT token uses alg:none, allowing forged tokens without a valid signature.",
-                    evidence=f"Token header declares alg:none",
+                    evidence="Token header declares alg:none",
                     host=target,
                 ))
             if jwt_result.weak_secret:
@@ -1025,7 +1025,7 @@ def audit(
                 if bypassed:
                     console.print(f"  [bold red]⚠  Live alg:none bypass SUCCEEDED on {jwt_target}[/bold red]")
                 else:
-                    console.print(f"  [green]Live alg:none: server rejected forged token[/green]")
+                    console.print("  [green]Live alg:none: server rejected forged token[/green]")
         except Exception as e:
             console.print(f"  [yellow]JWT analysis error: {e}[/yellow]")
     else:
@@ -1276,7 +1276,6 @@ def _run_post_scan_critic(mission, console) -> None:
         console.print(f"  [dim]Analyse de {len(unvalidated)} finding(s) en cours...[/dim]\n")
 
     from rao.agents.critic import CriticAgent
-    from rao.core.structured_output import CriticVerdict, Exploitability, Verdict
 
     critic = CriticAgent()
     validated_count = 0
@@ -1443,6 +1442,146 @@ def _is_ip(target: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+# ── rao llm-redteam ─────────────────────────────────────────────────────────────
+
+@cli.command("llm-redteam")
+@click.option("--profile", "-p", type=click.Path(exists=True), help="Target profile YAML (see rao/tools/llm_redteam/data/targets/)")
+@click.option("--openai", "openai_base", default="", help="Quick mode: OpenAI-compatible api_base, e.g. http://localhost:8000/v1")
+@click.option("--model", default="", help="Model name (used with --openai)")
+@click.option("--api-key-env", default="OPENAI_API_KEY", help="Env var holding the API key (used with --openai)")
+@click.option("--system", default="", help="System prompt to place the target under test (used with --openai)")
+@click.option("--categories", default="", help="Comma-separated OWASP LLM ids to run, e.g. LLM01,LLM07")
+@click.option("--judge/--no-judge", "use_judge", default=None, help="Use the conservative LLM judge for ambiguous cases")
+@click.option("--baseline", is_flag=True, help="Compare against and update the per-target baseline")
+@click.option("--ci", is_flag=True, help="Exit non-zero if a NEW vulnerability appears vs baseline (implies --baseline)")
+@click.option("--json", "json_out", is_flag=True, help="Write a JSON report")
+@click.option("--confirm", is_flag=True, help="Confirm you are authorized to test this target")
+@click.option("--verbose", "-v", is_flag=True)
+def llm_redteam(profile, openai_base, model, api_key_env, system, categories,
+                use_judge, baseline, ci, json_out, confirm, verbose):
+    """Red-team an LLM endpoint (OWASP LLM Top 10 + MITRE ATLAS).
+
+    Provide a target either via --profile <yaml> or quick OpenAI mode:
+
+        rao llm-redteam --openai http://localhost:8000/v1 --model gpt-test --confirm
+        rao llm-redteam --profile my_target.yaml --baseline --ci --confirm
+    """
+    import yaml
+
+    from rao.config import settings
+    from rao.tools.llm_redteam.baseline import (
+        diff_baseline,
+        load_baseline,
+        probe_status,
+        save_baseline,
+    )
+    from rao.tools.llm_redteam.judge import LLMJudge
+    from rao.tools.llm_redteam.probes import filter_probes, load_probes
+    from rao.tools.llm_redteam.report import print_console_report, save_json_report
+    from rao.tools.llm_redteam.scanner import LLMRedTeamScanner
+    from rao.tools.llm_redteam.target import build_target
+
+    _setup_logging(verbose)
+    console.print(BANNER)
+
+    # Build the target.
+    try:
+        if profile:
+            prof = yaml.safe_load(open(profile, encoding="utf-8")) or {}
+            target = build_target(prof)
+        elif openai_base and model:
+            target = build_target({
+                "type": "openai", "api_base": openai_base, "model": model,
+                "api_key_env": api_key_env, "system": system,
+            })
+        else:
+            console.print("[red]ERROR:[/red] provide --profile <yaml> or --openai <api_base> --model <name>.")
+            sys.exit(1)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]Could not build target: {e}[/red]")
+        sys.exit(1)
+
+    _require_confirm(target.label, confirm)
+
+    # Judge selection (default from config).
+    judge_enabled = settings.llm_redteam.judge_enabled if use_judge is None else use_judge
+    judge = None
+    if judge_enabled:
+        judge = LLMJudge()
+        status = "available" if judge.available else "[yellow]offline — ambiguous probes stay BLOCKED[/yellow]"
+        console.print(f"[dim]Judge LLM: {status}[/dim]")
+    else:
+        console.print("[dim]Judge disabled — only deterministic detectors used.[/dim]")
+
+    cats = [c for c in categories.split(",") if c.strip()] if categories else None
+    probes = filter_probes(load_probes(), cats)
+    console.print(f"[dim]Running {len(probes)} probe group(s) against {target.label}...[/dim]\n")
+
+    scanner = LLMRedTeamScanner(
+        concurrency=settings.llm_redteam.concurrency,
+        request_timeout=settings.llm_redteam.request_timeout,
+        judge=judge,
+    )
+    with console.status("[bold blue]Probing LLM target...[/bold blue]"):
+        result = scanner.scan(target, probes)
+
+    print_console_report(result, console)
+
+    # Continuous: baseline diff / CI gate.
+    if baseline or ci:
+        prior = load_baseline(result.target_id)
+        statuses = probe_status(result)
+        diff = diff_baseline(prior, statuses)
+        save_baseline(result.target_id, statuses)
+        console.print(f"\n[bold]Baseline diff:[/bold] {diff.summary()}")
+        for entry in diff.new:
+            console.print(f"  [red]NEW[/red] {entry['probe_id']} ({entry['owasp_id']})")
+        for entry in diff.fixed:
+            console.print(f"  [green]FIXED[/green] {entry['probe_id']} ({entry['owasp_id']})")
+        if ci and diff.has_regressions:
+            console.print("\n[bold red]CI gate: NEW vulnerabilities detected — failing.[/bold red]")
+            sys.exit(1)
+
+    if json_out:
+        path = save_json_report(result)
+        console.print(f"\n[green]JSON report: {path}[/green]")
+
+
+# ── rao llm-eval ──────────────────────────────────────────────────────────────
+
+@cli.command("llm-eval")
+@click.option("--judge/--no-judge", "use_judge", default=False, help="Use the LLM judge during evaluation")
+@click.option("--verbose", "-v", is_flag=True)
+def llm_eval(use_judge, verbose):
+    """Measure the scanner's false-positive / false-negative rate against
+    ground-truth mock targets. Fails if any false positive occurs (FP must be 0)."""
+    from rao.tools.llm_redteam.eval import run_eval
+    from rao.tools.llm_redteam.judge import LLMJudge
+    from rao.tools.llm_redteam.scanner import LLMRedTeamScanner, new_canary
+
+    _setup_logging(verbose)
+    console.print(BANNER)
+
+    judge = LLMJudge() if use_judge else None
+    if use_judge:
+        console.print(f"[dim]Judge LLM: {'available' if judge.available else 'offline'}[/dim]")
+
+    scanner = LLMRedTeamScanner(judge=judge)
+    with console.status("[bold blue]Running evaluation suite...[/bold blue]"):
+        report = run_eval(scanner, canary=new_canary())
+
+    console.print("\n[bold]Confusion matrix[/bold]")
+    console.print(report.confusion_str())
+
+    if report.fp:
+        console.print(f"\n[bold red]FAIL: {report.fp} false positive(s)[/bold red]")
+        for d in report.fp_details:
+            console.print(f"  [red]FP[/red] {d['probe_id']} on {d['target']}")
+        sys.exit(1)
+    console.print("\n[bold green]PASS: 0 false positives[/bold green] "
+                  f"(recall={report.recall:.2f})")
 
 
 def main():

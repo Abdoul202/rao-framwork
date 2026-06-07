@@ -90,11 +90,27 @@ Chaque source OSINT fonctionne indépendamment. Sans clé, WHOIS et URLScan fonc
 
 ---
 
+### LLM Red Teaming (`rao llm-redteam`)
+
+| Variable | Défaut | Description |
+|---|---|---|
+| `LLM_REDTEAM_JUDGE` | `true` | Active le juge LLM conservateur pour les cas ambigus (override par `--judge/--no-judge`) |
+| `LLM_REDTEAM_CONCURRENCY` | `5` | Nombre de probes envoyées en parallèle (moteur async borné) |
+| `LLM_REDTEAM_TIMEOUT` | `30` | Timeout HTTP par requête vers la cible LLM (secondes) |
+
+> Le juge LLM réutilise la cascade `LLM_PROVIDER` (Groq/Ollama). S'il est
+> indisponible, les probes ambigus restent `BLOCKED` (biais 0 faux positif) au
+> lieu de deviner. La clé API de la **cible** OpenAI-compatible est lue depuis la
+> variable d'environnement nommée par `--api-key-env` (défaut `OPENAI_API_KEY`),
+> jamais stockée en dur.
+
+---
+
 ### Rapports
 
 | Variable | Défaut | Description |
 |---|---|---|
-| `REPORT_OUTPUT_DIR` | `<projet>/results` | Répertoire de sortie des rapports JSON/HTML |
+| `REPORT_OUTPUT_DIR` | `<projet>/results` | Répertoire de sortie des rapports JSON/HTML (LLM red team : `results/llm_redteam/<id>/`) |
 
 ---
 
@@ -146,4 +162,6 @@ print(settings.neo4j.uri)             # "bolt://localhost:7687"
 print(settings.report_output_dir)     # "/path/to/results"
 print(settings.nvd_api_key)           # clé NVD
 print(settings.chroma.persist_dir)    # "/path/to/chroma_data"
+print(settings.llm_redteam.judge_enabled)   # True
+print(settings.llm_redteam.concurrency)     # 5
 ```

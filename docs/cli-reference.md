@@ -18,6 +18,8 @@ Commandes:
   osint       Collecte OSINT multi-sources
   nuclei-scan Scan Nuclei (9000+ templates CVE)
   jwt-scan    Analyse de sécurité JWT
+  llm-redteam Red teaming LLM continu (OWASP LLM Top 10 + ATLAS)
+  llm-eval    Mesure FP/FN du scanner LLM (cibles vérité-terrain)
   subdomains  Énumération de sous-domaines (passif)
   sessions    Gestion des sessions sauvegardées
 ```
@@ -436,12 +438,78 @@ rao sessions resume mission_20260525 --html   # + rapport HTML
 
 ---
 
+## `rao llm-redteam` — Red teaming LLM continu
+
+Attaque un endpoint LLM et **prouve** chaque faille (détecteurs déterministes
+d'abord, juge LLM conservateur biaisé 0 faux positif ensuite). Findings mappés
+**OWASP LLM Top 10 (2025)** + **MITRE ATLAS**. Premier moteur **async** du projet
+(httpx + concurrence bornée). Voir [LLM_REDTEAM.md](LLM_REDTEAM.md).
+
+```bash
+# Endpoint OpenAI-compatible (OpenAI, Groq, vLLM, Ollama /v1, LM Studio…)
+rao llm-redteam --openai http://localhost:8000/v1 --model my-model --judge --confirm --json
+
+# Endpoint HTTP générique via profil YAML
+rao llm-redteam --profile target.yaml --confirm
+
+# Mode continu / gate CI : échoue si une NOUVELLE faille apparaît vs baseline
+rao llm-redteam --profile target.yaml --baseline --ci --confirm
+```
+
+### Options
+
+| Option | Default | Description |
+|---|---|---|
+| `--profile, -p PATH` | — | Profil cible YAML (voir `rao/tools/llm_redteam/data/targets/`) |
+| `--openai BASE` | — | Mode rapide : `api_base` OpenAI-compatible (ex. `http://localhost:8000/v1`) |
+| `--model NAME` | — | Nom du modèle (avec `--openai`) |
+| `--api-key-env VAR` | `OPENAI_API_KEY` | Variable d'env contenant la clé API (avec `--openai`) |
+| `--system TEXT` | — | System prompt sous lequel placer la cible (avec `--openai`) |
+| `--categories LIST` | — | Filtre OWASP, ex. `LLM01,LLM07` |
+| `--judge / --no-judge` | config | Juge LLM conservateur pour les cas ambigus |
+| `--baseline` | off | Compare et met à jour la baseline de la cible |
+| `--ci` | off | Sort en code ≠ 0 si une faille `NEW` apparaît (implique `--baseline`) |
+| `--json` | off | Écrit un rapport JSON (`results/llm_redteam/<id>/`) |
+| `--confirm` | off | **REQUIS** — confirme l'autorisation écrite |
+| `--verbose, -v` | off | Logs détaillés |
+
+### Couverture (POC)
+
+| OWASP LLM | Probe | Détecteur déterministe |
+|---|---|---|
+| LLM01 Prompt Injection | directe + indirecte (document empoisonné) | canary echo |
+| LLM01 (ATLAS AML.T0054) | jailbreaks (DAN, encodage) | refus → bloqué ; sinon juge |
+| LLM02 Sensitive Info Disclosure | extraction de secret/clé | canary / juge |
+| LLM05 Improper Output Handling | XSS-via-LLM | markup exécutable |
+| LLM06 Excessive Agency | invocation d'outil non autorisée | juge |
+| LLM07 System Prompt Leakage | extraction verbatim | sentinel / juge |
+
+---
+
+## `rao llm-eval` — Évaluation FP/FN du scanner
+
+Mesure le taux de faux positifs / faux négatifs du scanner contre des cibles à
+vérité-terrain (mocks vulnérable + durci). Imprime une matrice de confusion et
+**échoue si un seul faux positif** apparaît (critère : FP = 0).
+
+```bash
+rao llm-eval            # détecteurs déterministes seuls
+rao llm-eval --judge    # avec le juge LLM (rappel plus élevé)
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--judge / --no-judge` | off | Utilise le juge LLM pendant l'évaluation |
+| `--verbose, -v` | off | Logs détaillés |
+
+---
+
 ## Codes de sortie
 
 | Code | Description |
 |---|---|
 | `0` | Succès |
-| `1` | Erreur (pas de `--confirm`, scope violation, cible inaccessible) |
+| `1` | Erreur (pas de `--confirm`, scope violation, cible inaccessible) ou, pour `llm-redteam --ci`, régression `NEW` détectée ; pour `llm-eval`, faux positif détecté |
 
 ---
 

@@ -151,6 +151,38 @@ for finding in report['findings']:
 
 ---
 
+## Rapport LLM Red Team (JSON)
+
+`rao llm-redteam --json` écrit un rapport dédié dans
+`results/llm_redteam/<target_id>/report_<label>_<ts>.json`, avec une matrice de
+couverture OWASP LLM Top 10 et la preuve (détecteur + confiance + extrait) par
+finding :
+
+```jsonc
+{
+  "meta":    { "module": "llm_redteam", "target": "openai:my-model", "judge_used": true },
+  "summary": {
+    "total_probes": 13,
+    "vulnerable": 4,
+    "by_severity": { "critical": 0, "high": 2, "medium": 2, ... },
+    "coverage": { "LLM01": { "probed": 6, "succeeded": 2 }, "LLM05": { ... } }
+  },
+  "findings": [
+    {
+      "probe_id": "pi_direct_ignore", "owasp_id": "LLM01", "atlas_id": "AML.T0051",
+      "severity": "high", "success": true, "detector": "canary",
+      "confidence": 0.99, "response_excerpt": "...", "judge_reasoning": ""
+    }
+  ],
+  "errors": []
+}
+```
+
+La baseline de régression (`--baseline`) est stockée à part dans
+`results/llm_redteam/<target_id>/baseline.json` (statut par probe + `first_seen`).
+
+---
+
 ## Rapport HTML
 
 Généré avec `--html`. Thème dark premium.

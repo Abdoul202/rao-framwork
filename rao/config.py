@@ -46,10 +46,19 @@ class LLMSettings(BaseSettings):
     ollama_model: str = Field(default="mistral", alias="OLLAMA_MODEL")
 
 
+class LLMRedTeamSettings(BaseSettings):
+    """Settings for the LLM red teaming module (rao llm-redteam)."""
+
+    judge_enabled: bool = Field(default=True, alias="LLM_REDTEAM_JUDGE")
+    concurrency: int = Field(default=5, alias="LLM_REDTEAM_CONCURRENCY")
+    request_timeout: float = Field(default=30.0, alias="LLM_REDTEAM_TIMEOUT")
+
+
 class Settings(BaseSettings):
     neo4j: Neo4jSettings = Neo4jSettings()
     chroma: ChromaSettings = ChromaSettings()
     llm: LLMSettings = LLMSettings()
+    llm_redteam: LLMRedTeamSettings = LLMRedTeamSettings()
     report_output_dir: str = Field(
         default=str(ROOT_DIR / "results"), alias="REPORT_OUTPUT_DIR"
     )

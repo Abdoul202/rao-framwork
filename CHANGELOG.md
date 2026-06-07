@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — Planifié
 
+### Pivot stratégique — Continuous LLM Red Teaming (v0.7 POC)
+
+Nouveau module offensif IA : `rao/tools/llm_redteam/` — red teaming continu et
+**fondé sur la preuve** d'endpoints LLM, mappé **OWASP LLM Top 10 (2025)** +
+**MITRE ATLAS**. Premier socle **async** du projet (httpx + concurrence bornée).
+
+#### Ajouté
+- **`rao llm-redteam`** : attaque un LLM cible (profil HTTP générique ou raccourci
+  OpenAI-compatible `--openai`) avec un catalogue de probes (injection directe/
+  indirecte, fuite de system prompt, exfiltration de secret, sortie non sûre /
+  XSS-via-LLM, excessive agency, jailbreaks). Détection **déterministe d'abord**
+  (canary / sentinel / sortie exécutable / refus), juge LLM **conservateur**
+  (biais 0 faux positif) uniquement sur les cas ambigus.
+- **Couche « continue »** : baseline par cible + diff `NEW`/`FIXED`/`PERSISTENT`
+  (`--baseline`), gate CI `--ci` (échec si nouvelle vulnérabilité).
+- **`rao llm-eval`** : harness d'évaluation mesurant FP/FN contre des cibles à
+  vérité-terrain (mocks vulnérable/durci). Critère : **FP = 0**.
+- `rao/tools/llm_redteam/` : `models.py`, `target.py` (adaptateurs async
+  HTTP/OpenAI), `probes.py` + `data/llm_probes.yaml`, `detectors.py`, `judge.py`,
+  `scanner.py`, `report.py`, `baseline.py`, `eval.py`, `mocks.py`.
+- Réglages `LLMRedTeamSettings` (`LLM_REDTEAM_JUDGE`, `_CONCURRENCY`, `_TIMEOUT`).
+- 46 tests unitaires (`tests/test_llm_redteam_*.py`) + serveur mock OpenAI-
+  compatible (`tests/fixtures/mock_llm_server.py`). Dépendances : `httpx`,
+  `pyyaml` (runtime), `respx` (dev).
+
 ### Phase A — v0.7.0 (Valeur immédiate)
 
 #### Prévu — Risk Scoring normalisé

@@ -242,6 +242,52 @@ for r in results:
 
 ---
 
+## LLM Red Teaming
+
+Attaque un endpoint LLM et **prouve** chaque faille (détecteurs déterministes,
+puis juge LLM conservateur). Voir [LLM_REDTEAM.md](LLM_REDTEAM.md).
+
+```python
+from rao.tools.llm_redteam import LLMRedTeamScanner, build_target
+from rao.tools.llm_redteam.judge import LLMJudge
+
+# Cible OpenAI-compatible (ou {"type": "http", "url": ..., "body": {...}, "response_path": ...})
+target = build_target({
+    "type": "openai",
+    "api_base": "http://localhost:8000/v1",
+    "model": "my-model",
+    "api_key_env": "OPENAI_API_KEY",
+})
+
+scanner = LLMRedTeamScanner(concurrency=5, judge=LLMJudge())
+result = scanner.scan(target)          # LLMRedTeamResult
+
+print(f"{len(result.successes)} / {result.total} probes vulnérables")
+for f in result.successes:
+    print(f"  [{f.owasp_id.value}] {f.name} — détecteur={f.detector} conf={f.confidence:.2f}")
+
+print(result.coverage())               # couverture par catégorie OWASP LLM
+```
+
+Mode continu (baseline + diff) et harness d'éval :
+
+```python
+from rao.tools.llm_redteam.baseline import load_baseline, probe_status, diff_baseline, save_baseline
+from rao.tools.llm_redteam.eval import run_eval
+
+# Régression vs baseline
+prior = load_baseline(result.target_id)
+diff = diff_baseline(prior, probe_status(result))
+save_baseline(result.target_id, probe_status(result))
+print(diff.summary())                  # NEW=.. FIXED=.. PERSISTENT=..
+
+# Mesurer FP/FN contre des cibles vérité-terrain (critère FP = 0)
+report = run_eval(LLMRedTeamScanner())
+print(report.confusion_str())
+```
+
+---
+
 ## Reporting
 
 ### Rapport console + JSON

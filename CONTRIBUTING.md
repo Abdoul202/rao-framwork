@@ -139,8 +139,9 @@ make test-fast      # skip slow integration tests
 
 Use mocks for:
 - All LLM calls (`unittest.mock.patch`)
-- Network calls (`responses` library or `pytest-httpx`)
-- External API calls (NVD, crt.sh, etc.)
+- Network calls — `responses`/`pytest-httpx` for `requests`, **`respx`** for the
+  async `httpx` clients used by `rao/tools/llm_redteam/`
+- External API calls (NVD, crt.sh, target LLM endpoints, etc.)
 
 ---
 

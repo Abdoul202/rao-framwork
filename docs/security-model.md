@@ -167,6 +167,23 @@ Quand le LLM est indisponible, le Critic applique une politique conservative :
 
 ---
 
+## 10. Red teaming LLM — autorisation, secrets et 0 faux positif
+
+Le module `rao llm-redteam` cible des endpoints LLM tiers. Garde-fous :
+
+- **`--confirm` obligatoire** — même gate d'autorisation que les scans actifs
+  (`_require_confirm`), avec entrée dans `results/audit.log`.
+- **Clés API jamais en dur** — la clé de la cible OpenAI-compatible est lue depuis
+  la variable d'environnement nommée par `--api-key-env` (défaut `OPENAI_API_KEY`).
+- **Biais 0 faux positif** — une faille n'est marquée `success` qu'avec une preuve
+  textuelle vérifiable (détecteur déterministe) ou une confirmation explicite et
+  confiante du juge LLM ; sinon `blocked`. Le juge indisponible ⇒ `blocked` (pas
+  de supposition).
+- **Juge distinct de la cible** — le juge réutilise `get_llm_or_none()` (Groq/
+  Ollama) et n'envoie jamais de secrets de la cible au-delà de l'extrait évalué.
+
+---
+
 ## Checklist de déploiement sécurisé
 
 - [ ] `.env` n'est pas committé (vérifié dans `.gitignore`)
@@ -175,3 +192,4 @@ Quand le LLM est indisponible, le Critic applique une politique conservative :
 - [ ] Scans effectués uniquement sur des cibles avec autorisation écrite
 - [ ] `results/audit.log` archivé après chaque mission
 - [ ] `allow_private=False` si WebScanner est exposé comme API
+- [ ] Clé API de la cible LLM fournie via variable d'env (`--api-key-env`), pas en CLI

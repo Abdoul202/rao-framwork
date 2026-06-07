@@ -1,0 +1,20 @@
+# Example target profile: a generic HTTP chat endpoint.
+#
+# The `body` mapping is sent as JSON; the literal token {{PROMPT}} is replaced
+# (safely, after JSON encoding) with each probe's payload. `response_path` is a
+# dotted path (supporting numeric list indices) to the assistant text.
+#
+#   rao llm-redteam --profile rao/tools/llm_redteam/data/targets/generic_http.yaml --confirm
+type: http
+label: custom-bot
+url: https://api.example.com/v1/chat
+method: POST
+headers:
+  Content-Type: application/json
+  Authorization: "Bearer REPLACE_ME"
+body:
+  conversation:
+    - role: user
+      message: "{{PROMPT}}"
+response_path: data.reply.text
+timeout: 30

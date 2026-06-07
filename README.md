@@ -133,6 +133,11 @@ rao webscan https://target.local --confirm --inject --test-auth
 # JWT security analysis
 rao jwt-scan eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.SIGNATURE
 
+# Continuous LLM red teaming (OWASP LLM Top 10 + MITRE ATLAS) — see docs/LLM_REDTEAM.md
+rao llm-redteam --openai http://localhost:8000/v1 --model my-model --judge --confirm --json
+rao llm-redteam --profile target.yaml --baseline --ci --confirm   # CI regression gate
+rao llm-eval                                                       # prove FP=0 / measure recall
+
 # SSL/TLS deep analysis
 rao ssl https://target.local
 
@@ -202,7 +207,7 @@ pytest tests/ -v
 The framework uses Groq (free API) or Ollama (local) for AI analysis:
 
 ```
-🧠 Critic LLM — validates each finding individually
+  Critic LLM — validates each finding individually
   ✅ VALIDÉ   [HIGH]   Missing header: X-Frame-Options
   ❌ FAUX POSITIF [LOW] Missing header: X-XSS-Protection
   ✅ VALIDÉ   [CRITICAL] SQLi indicator in param 'id'

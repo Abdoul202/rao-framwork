@@ -152,6 +152,45 @@ Scout ──┬──(hosts trouvés)──▶ Librarian ──┬──(finding
 
 ---
 
+### Module LLM Red Teaming (standalone, **async**)
+
+**Package :** `rao/tools/llm_redteam/` — pivot stratégique v0.7. Pipeline
+**indépendant** du graphe OCC (il cible un LLM, pas une infra réseau) et **premier
+moteur async** du projet (httpx + `asyncio.Semaphore` borné). Mappé **OWASP LLM
+Top 10 (2025)** + **MITRE ATLAS**. Commandes : `rao llm-redteam`, `rao llm-eval`.
+
+```
+          LLMTarget (HTTP / OpenAI-compatible, async)
+                          │
+                          ▼
+   probes (YAML) ─▶ LLMRedTeamScanner (async borné)
+                          │
+              ┌───────────┴───────────┐
+              ▼                        ▼
+   détecteurs déterministes    juge LLM conservateur
+   (canary/sentinel/markup/    (cas ambigus seulement,
+    refus) — 0-FP d'abord       biais BLOCKED)
+              └───────────┬───────────┘
+                          ▼
+        LLMRedTeamResult ─▶ report (console/JSON/matrice OWASP)
+                          └▶ baseline diff NEW/FIXED/PERSISTENT (--ci)
+        eval.py ─▶ FP/FN vs mocks vérité-terrain (cible : FP = 0)
+```
+
+| Module | Fichier | Rôle |
+|---|---|---|
+| Modèles | `models.py` | `LLMProbe`, `LLMFinding`, `LLMRedTeamResult`, enums OWASP/détecteur |
+| Cibles | `target.py` | Adaptateurs async `HTTPTarget`, `OpenAITarget` |
+| Probes | `probes.py` + `data/llm_probes.yaml` | Catalogue + rendu de payloads |
+| Détecteurs | `detectors.py` | Décision déterministe (biais 0 faux positif) |
+| Juge | `judge.py` | `LLMJudge` conservateur (réutilise `get_llm_or_none()`) |
+| Scanner | `scanner.py` | Runner async borné (ToolPlugin) |
+| Continu | `baseline.py` | Baseline par cible + diff + gate CI |
+| Éval | `eval.py` + `mocks.py` | Mesure FP/FN vs cibles vérité-terrain |
+| Reporting | `report.py` | Console + JSON + matrice de couverture OWASP |
+
+---
+
 ## Graphe LangGraph — Diagramme complet
 
 ```mermaid
@@ -177,7 +216,7 @@ graph TD
 ```
 rao/
 ├── __init__.py              # __version__ = "0.6.0"
-├── cli.py                  # Interface Click (9 commandes)
+├── cli.py                  # Interface Click (11 commandes)
 ├── config.py               # Settings Pydantic depuis .env
 ├── agents/
 │   ├── scout.py            # Reconnaissance nmap
@@ -201,7 +240,18 @@ rao/
 │   ├── nuclei_plugin.py     # NucleiPlugin (9000+ templates)
 │   ├── subdomain_enum.py
 │   ├── scope_validator.py
-│   └── plugin.py            # Protocole ToolPlugin + ToolRegistry
+│   ├── plugin.py            # Protocole ToolPlugin + ToolRegistry
+│   └── llm_redteam/         # Module LLM red teaming (async, OWASP LLM + ATLAS)
+│       ├── models.py        # LLMProbe, LLMFinding, LLMRedTeamResult
+│       ├── target.py        # Adaptateurs async HTTP / OpenAI-compatible
+│       ├── probes.py        # Loader + data/llm_probes.yaml
+│       ├── detectors.py     # Détecteurs déterministes (0-FP)
+│       ├── judge.py         # Juge LLM conservateur
+│       ├── scanner.py       # Scanner async borné (ToolPlugin)
+│       ├── baseline.py      # Baseline + diff NEW/FIXED/PERSISTENT + --ci
+│       ├── eval.py          # Harness FP/FN
+│       ├── mocks.py         # Cibles mock vérité-terrain
+│       └── report.py        # Console + JSON + matrice OWASP
 ├── knowledge/
 │   ├── neo4j_store.py       # Attack graph (optionnel)
 │   └── chroma_store.py      # KnowledgeBase ChromaDB
