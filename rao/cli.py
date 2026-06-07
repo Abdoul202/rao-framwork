@@ -787,15 +787,24 @@ def audit(
 
     # ── Mission banner ──────────────────────────────────────────────────────
     modules = []
-    if not no_cve:        modules.append("[green]CVE + LLM[/green]")
-    if not no_web:        modules.append("[green]WebScan (OWASP x10)[/green]")
-    if not no_inject:     modules.append("[yellow]Injections[/yellow]")
-    if not no_auth:       modules.append("[yellow]Auth tests[/yellow]")
-    if not no_ssl:        modules.append("[green]SSL/TLS[/green]")
-    if not no_osint:      modules.append("[green]OSINT[/green]")
-    if not no_nuclei:     modules.append("[green]Nuclei[/green]")
-    if not no_subdomains: modules.append("[green]Subdomains[/green]")
-    if jwt_token:         modules.append("[cyan]JWT[/cyan]")
+    if not no_cve:
+        modules.append("[green]CVE + LLM[/green]")
+    if not no_web:
+        modules.append("[green]WebScan (OWASP x10)[/green]")
+    if not no_inject:
+        modules.append("[yellow]Injections[/yellow]")
+    if not no_auth:
+        modules.append("[yellow]Auth tests[/yellow]")
+    if not no_ssl:
+        modules.append("[green]SSL/TLS[/green]")
+    if not no_osint:
+        modules.append("[green]OSINT[/green]")
+    if not no_nuclei:
+        modules.append("[green]Nuclei[/green]")
+    if not no_subdomains:
+        modules.append("[green]Subdomains[/green]")
+    if jwt_token:
+        modules.append("[cyan]JWT[/cyan]")
 
     console.print(Panel(
         f"[bold]Target:[/bold] {target}\n"

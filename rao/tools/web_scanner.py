@@ -2186,8 +2186,6 @@ class WebScanner:
         Also tests GET query params with bracket notation (__proto__[key]).
         Mainly affects Node.js / Express applications.
         """
-        parsed = urlparse(base_url)
-
         # 1. POST with JSON body
         for payload in PROTO_POLLUTION_PAYLOADS:
             try:
@@ -2291,7 +2289,7 @@ class WebScanner:
                         response_data += chunk
                         if len(response_data) > 10000:
                             break
-                    except socket.timeout:
+                    except TimeoutError:
                         break
                 sock.close()
 
